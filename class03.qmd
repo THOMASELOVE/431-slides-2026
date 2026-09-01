@@ -347,24 +347,25 @@ Measures of **spread** or variation:
     - R **data** set, **Report**: both Quarto and HTML files
     - **Video** (max: 3 minutes), **Self-Evaluation** form
 
-## Returning to the ToothGrowth data
-
-Numerical summaries of the `len` variable:
+## ToothGrowth Summarizing `len`
 
 ```{r}
 #| echo: true
-
-TG_new |> select(len) |> describe_distribution()
+TG_new |> select(len) |> describe_distribution(quartiles = TRUE)
 ```
 
-- `IQR` = `q75` - `q25`, the interquartile range
+- The definition of `IQR` = `q75` - `q25`, the interquartile range. 
+
+::: aside
+
+There are [9 different ways to calculate the quantiles](https://stat.ethz.ch/R-manual/R-devel/library/stats/html/quantile.html), and `describe_distribution()` unfortunately uses type 6 for IQR and type 7 (the default) for quartiles.
 
 ```{r}
 #| echo: true
-
-TG_new |> reframe(lovedist(len))
+quantile(TG_new$len, c(0.25,0.75), type = 6); quantile(TG_new$len, c(0.25,0.75), type = 7)
 ```
 
+:::
 
 ## Histogram of odontoblast lengths
 
