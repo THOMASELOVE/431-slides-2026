@@ -1,0 +1,654 @@
+---
+title: "431 Class 07"
+author: Thomas E. Love, Ph.D.
+date: "2026-09-15"
+format:
+  revealjs: 
+    theme: dracula
+    embed-resources: true
+    self-contained: true
+    slide-number: true
+    footnotes-hover: true
+    preview-links: auto
+    date-format: iso
+    footer: "431 Class 07 | 2026-09-15 | <https://thomaselove.github.io/431-2026/>"
+---
+
+## Today's Agenda
+
+- New Data: Ohio's 88 Counties
+- Comparing Two Samples
+  - How should we interpret an uncertainty interval?
+- Comparing More than Two Independent Samples
+  - Analysis of Variance (ANOVA)
+  - Using Regression to Develop an ANOVA model
+
+## Load packages and set theme
+
+```{r}
+#| echo: true
+#| message: false
+
+knitr::opts_chunk$set(comment = NA)
+source("c07/data/Love-431.R") # for the lovedist() function
+
+library(janitor)
+library(patchwork)
+library(readxl)
+library(knitr)
+library(kableExtra)
+library(MKinfer)
+library(rstanarm)
+library(car)         
+library(ggdist)       
+library(easystats)
+library(tidyverse)
+
+theme_set(theme_bw())
+```
+
+## `ohio_2019.xlsx` codebook
+
+![](c07/images/ohio_2019_codebook.png)
+
+## The `ohio_2019.xlsx` file
+
+![](c07/images/ohio_2019_excel.png)
+
+## Data Ingest
+
+```{r}
+#| echo: true
+
+oh19 <- read_xlsx("c07/data/ohio_2019.xlsx") |>
+  janitor::clean_names()
+
+oh19
+```
+
+## Selecting Variables for Today's Class
+
+```{r}
+#| echo: true
+
+ohio_7 <- oh19 |>
+  select(county, h_out24, red_2024, inactive, 
+         h_fac19rk, h_out19rk, social)
+
+ohio_7
+```
+
+## Variables Selected: `ohio_7`
+
+Variable | Description
+:--------: | :-------------------------------------
+`county` | County name
+`h_out24` | CHR 2024 Health Outcomes Score
+`red_2024` | % of 2024 Election Ballots for Trump/Vance
+`inactive` | 2019: % 18+ without leisure physical activity
+`h_fac19rk` | CHR 2019 Health Factors Rank 
+`h_out19rk` | CHR 2019 Health Outcomes Rank
+`social` | 2019: Membership associations / 100K pop.
+
+## `data_codebook()` result
+
+```{r}
+#| echo: true
+data_codebook(ohio_7)
+```
+
+## Data Management for `ohio_7`
+
+1. Store ranks (1 = best, 88 = worst) of counties based on `h_out24` in `h_out24rk`.
+
+```{r}
+#| echo: true
+ohio_7 <- ohio_7 |>
+  mutate(h_out24rk = 89-row_number(h_out24))
+
+ohio_7 |> select(county, h_out24, h_out24rk) |>
+  filter(county %in% c("Cuyahoga", "Delaware", "Geauga", "Scioto"))
+```
+
+## Data Management for `ohio_7`
+
+2. Create two groups in `sedentary` to reflect top third and bottom third of counties by `inactive`
+
+```{r}
+#| echo: true
+ohio_7 <- ohio_7 |>
+  mutate(sedentary = case_when(
+    inactive >= quantile(inactive, 0.67) ~ "More",
+    inactive < quantile(inactive, 0.33) ~ "Less"))
+
+ohio_7 |> tabyl(sedentary) |> adorn_pct_formatting()
+```
+
+## Data Management for `ohio_7`
+
+3. Place into `hfactor` four groups of equal size derived from the `h_fac19rk` data.
+
+```{r}
+#| echo: true
+ohio_7 <- ohio_7 |>
+  mutate(hfactor = case_when(
+    h_fac19rk <= 22 ~ "Best",
+    h_fac19rk > 22 & h_fac19rk <= 44 ~ "High",
+    h_fac19rk > 44 & h_fac19rk <= 66 ~ "Low",
+    h_fac19rk > 66 ~ "Worst"))
+
+ohio_7 |> group_by(hfactor) |> reframe(lovedist(h_fac19rk))
+```
+
+## Data Management for `ohio_7`
+
+4. Place into `soc_grp` three groups of (approximately) equal size derived from the `social` data.
+
+```{r}
+#| echo: true
+ohio_7 <- ohio_7 |>
+  mutate(soc_gp = cut_number(social, n = 3))
+
+ohio_7 |> tabyl(soc_gp) |> adorn_pct_formatting()
+
+ohio_7 <- ohio_7 |> 
+  mutate(soc_gp = fct_recode(factor(soc_gp), 
+                             "Small" = "[3.8,10.2]",
+                             "Medium" = "(10.2,12.9]",
+                             "Large" = "(12.9,19.3]"))
+```
+
+## One of Today's Outcomes
+
+- **red_2024** = % of 2024 Presidential Election Ballots for Trump/Vance
+
+```{r}
+#| echo: true
+ohio_7 |> reframe(lovedist(red_2024))
+
+ohio_7 |> select(county, red_2024) |>
+  filter(county %in% c("Cuyahoga", "Putnam"))
+```
+
+## Another of Today's Outcomes
+
+- **h_out24** (outcomes) = quantity that describes the county's premature death and quality of life results, weighted equally and standardized (z scores), in 2024.
+  - Higher (more positive) values indicate better outcomes in this county.
+
+```{r}
+#| echo: true
+ohio_7 |> reframe(lovedist(h_out24))
+```
+
+## Create Factors, Drop Unused Levels
+
+```{r}
+#| echo: true
+ohio_7 <- ohio_7 |> 
+  mutate(across(where(is.character), as_factor)) |>
+  mutate(county = as.character(county)) |>
+  droplevels()
+  
+glimpse(ohio_7)
+```
+
+# Research Question 1
+
+## Question 1
+
+What is the difference in the average % of Republican presidential election ballots in 2024 between the most sedentary and least sedentary thirds of Ohio counties (as measured in 2019)?
+
+Key variables:
+
+- `red_2024` (numeric)
+- `sedentary` (factor with 2 levels)
+
+Comparing Two Means: Paired or Independent Samples?
+
+## DTDP. What's wrong here?
+
+```{r}
+#| echo: true
+
+ggplot(ohio_7, aes(x = sedentary, y = red_2024)) +
+  geom_boxplot()
+```
+
+## % Republican by Sedentary
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+ques1 <- ohio_7 |> filter(complete.cases(sedentary))
+
+ggplot(ques1, aes(x = sedentary, y = red_2024)) +
+  geom_violin(aes(fill = sedentary)) + 
+  geom_boxplot(width = 0.2, fill = "white", notch = TRUE) +
+  stat_summary(fun = mean, geom = "point", 
+               size = 2, col = "red") +
+  scale_fill_viridis_d(option = "plasma", alpha = 0.4) +
+  guides(fill = "none") +
+  labs(y = "% of votes for Republicans in 2024",
+       title = "Two Sample Comparison") +
+  coord_flip()
+```
+
+## Summarizing the Sample
+
+Numerical Summary with `lovedist()` from `Love-431.R`.
+
+```{r}
+#| echo: true
+
+ques1 |> group_by(sedentary) |> 
+  reframe(lovedist(red_2024))
+```
+
+- Which group has the larger sample mean `red_2024`? 
+- Can we reasonably pool standard deviations?
+- What can we say about skew in each group?
+
+## Q1: Comparison with t-test/OLS
+
+What conclusions can we draw from this pooled t approach?
+
+```{r}
+#| echo: true
+m1a <- t.test(red_2024 ~ sedentary, conf.level = 0.95, 
+              var.equal = TRUE, data = ques1)
+model_parameters(m1a)
+```
+
+## Q1: Comparison with t-test/OLS
+
+Are these the same results?
+
+```{r}
+#| echo: true
+m1b <- lm(red_2024 ~ sedentary, data = ques1)
+model_parameters(m1b, conf.level = 0.95)
+```
+
+## Q1: Comparison with Welch's t
+
+```{r}
+#| echo: true
+m1c <- t.test(red_2024 ~ sedentary, conf.level = 0.95, 
+              var.equal = FALSE, data = ques1)
+model_parameters(m1c)
+```
+
+## Q1: Comparison with bootstrap
+
+```{r}
+#| echo: true
+set.seed(43107)
+boot.t.test(red_2024 ~ sedentary, data = ques1, R = 2000,
+            var.equal = FALSE, conf.level = 0.95)
+```
+
+## Q1 estimates
+
+Approach | Estimate | 95% confidence interval
+:--------: | :--------: | :-----------------------:
+Pooled t | 11.99 | (6.65, 17.32)
+Welch t  | 11.99 | (6.60, 17.37)
+Bootstrap | 12.05 | (6.69, 17.12)
+
+- Which of these should we choose?
+  - Or does it not matter much?
+- Once we've made a choice, how can we describe the result properly?
+
+## Selecting the OLS/pooled t (1/2)
+
+- Point Estimate: 11.99
+- 95% pooled t Confidence Interval: (6.65, 17.32)
+
+Our best point estimate for the true difference (More Sedentary - Less Sedentary) is 11.99 percentage points in the % of Republican voters in 2024. 
+
+The confidence interval reflects imprecision in the population estimate, based only on assuming that the counties in our sample are selected at random from the population of interest.
+
+## Selecting the OLS/pooled t (2/2)
+
+- Point Estimate: 11.99 (more - less sedentary)
+
+- Are these counties in fact selected at random?
+
+When we generalize beyond these counties to the population they were selected at random from, then our data are compatible (at the 95% confidence level) with differences in the population means (more sedentary - less sedentary) between 6.65 and 17.32 percentage points, depending on the assumptions of our pooled t procedure (or linear model) being correct.
+
+## Selecting the Bootstrap (1/2)
+
+- Point Estimate: 12.05
+- 95% bootstrap Confidence Interval: (6.69, 17.12)
+
+The confidence interval reflects imprecision in the population estimate, based only on assuming that the counties are selected at random from the population of interest.
+
+- So what population of counties were these "selected at random from"?
+
+## Selecting the Bootstrap (2/2)
+
+- Point Estimate: 12.05 (more - less sedentary)
+
+When we generalize beyond these counties to the population they were selected at random from, then our data are compatible (at the 95% confidence level) with differences in the population means (more sedentary - less sedentary) between 6.69 and 17.12 percentage points, depending on the assumptions of our bootstrap procedure being correct.
+
+# Standing Break, followed by Research Question 2
+
+## Question 2
+
+What can we say about the difference between the rank in Health Outcomes Z-score for CHR 2024, and the rank in Health Outcomes Z-score for CHR 2019, on average, across Ohio's 88 counties?
+
+Key variables:
+
+- `h_out24rk` (numeric: 1 = best, 88 = worst)
+- `h_out19rk` (numeric: 1 = best, 88 = worst)
+
+Comparing Two Means: Paired or Independent Samples?
+
+## Calculating Paired Differences
+
+- Let's use rank in 2024 - rank in 2019, as above, which makes **negative** numbers improvements from 2019 to 2024.
+
+```{r}
+#| echo: true
+#| fig-height: 2
+#| fig-width: 10
+ques2 <- ohio_7 |> 
+    mutate(out_d = h_out24rk - h_out19rk)
+
+ques2 |> select(county, h_out24rk, h_out19rk, out_d) |>
+    filter(county %in% c("Adams", "Cuyahoga"))
+```
+
+## DTDP for Paired Differences
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+bw <- 2 # specify width of bins in histogram
+
+p1 <- ggplot(ques2, aes(out_d)) +
+  geom_histogram(binwidth = bw, fill = "black", col = "yellow" ) +
+  stat_function(fun = function(x) {
+    dnorm(x, mean = mean(ques2$out_d, na.rm = TRUE),
+          sd = sd(ques2$out_d, na.rm = TRUE) ) *
+        length(ques2$out_d) * bw},
+    geom = "area", alpha = 0.5, fill = "lightblue", col = "blue") +
+  labs(x = "2024 - 2019 Rank", y = "", title = "Histogram")
+
+p2 <- ggplot(ques2, aes(sample = out_d)) +
+  geom_qq() +
+  geom_qq_line(col = "red") +
+  labs(y = "2024 - 2019 Rank", x = "Standard Normal Distribution",
+    title = "Normal Q-Q plot")
+
+p3 <- ggplot(ques2, aes(x = out_d, y = "")) +
+  geom_violin(fill = "cornsilk") +
+  geom_boxplot(width = 0.2) +
+  stat_summary(fun = mean, geom = "point", shape = 16, col = "red") +
+  labs(y = "", x = "2024 - 2019 Rank", title = "Boxplot with Violin")
+
+p1 + (p2 / p3 + plot_layout(heights = c(2, 1))) +
+  plot_annotation(title = "2024 - 2019 Difference in CHR Health Outcome Rank", 
+  subtitle = "Negative Differences indicate improvements from 2019 to 2024")
+
+
+```
+
+## Numerical Summary of Data
+
+```{r}
+#| echo: true
+ques2 |> 
+   reframe(lovedist(out_d))
+```
+
+What can we say about the distribution of paired differences in our sample?
+
+- Do we see meaningful skew?
+- Do we see meaningfully heavy or light tails?
+- Which comparison approach should we use?
+
+## OLS/t-based approach
+
+```{r}
+#| echo: true
+m2a <- lm(out_d ~ 1, data = ques2)
+
+model_parameters(m2a, conf.level = 0.95)
+```
+
+```{r}
+#| echo: true
+m2b <- t.test(ques2$out_d, conf.level = 0.95)
+model_parameters(m2b)
+```
+
+## Bootstrap approach
+
+```{r}
+#| echo: true
+
+set.seed(432071)
+boot.t.test(ques2$out_d, R = 2000, conf.level = 0.95)
+```
+
+## Q2 estimates
+
+Approach | Estimate | 95% confidence interval
+:--------: | :--------: | :-----------------------:
+OLS / t | 0 | (-1.95, 1.95)
+Bootstrap | -0.02 | (-1.88, 1.90)
+
+- Which of these should we choose?
+  - Or does it not matter much?
+- Once we've made a choice, how can we describe the result properly?
+
+## Choosing OLS for Paired t
+
+- Point Estimate for mean difference = 0
+- 95% confidence interval (-1.95, 1.95)
+
+When we generalize beyond these counties to the population they were **selected at random** from, then our data are **compatible** (at the 95% confidence level) with population mean differences in rank between -1.95 and 1.95, depending on the **assumptions of our linear model** (paired t test) being correct.
+
+# Research Question 3
+
+## Question 3
+
+How large is the mean difference in 2024 Health Outcomes scores across the four groups of Ohio counties defined by their 2019 Health Factors rankings?
+
+Key variables:
+
+- `h_out24` (numeric)
+- `hfactor` (factor with 4 levels)
+
+Comparing **Four** Means with Independent Samples
+
+## DTDP for Question 3
+
+What's wrong here?
+
+```{r}
+#| echo: true
+
+ggplot(ohio_7, aes(x = hfactor, y = h_out24)) +
+  geom_boxplot()
+```
+
+
+## Re-order `hfactor` levels
+
+```{r}
+#| echo: true
+
+ohio_7 |> tabyl(hfactor)  
+
+ohio_7 <- ohio_7 |>
+   mutate(hfactor = fct_relevel(hfactor, 
+             "Worst", "Low", "High", "Best"))
+
+ohio_7 |> tabyl(hfactor)             
+```
+
+
+
+## DTDP for Question 3
+
+```{r}
+#| echo: true
+#| output-location: slide
+ggplot(ohio_7, aes(x = hfactor, y = h_out24)) +
+  geom_violin(aes(fill = hfactor)) + 
+  geom_boxplot(width = 0.2, fill = "white") +
+  stat_summary(fun = mean, geom = "point", 
+               size = 2, col = "red") +
+  scale_fill_viridis_d(option = "plasma", alpha = 0.4) +
+  guides(fill = "none") +
+  labs(x = "CHR 2019 Health Factors Group",
+       y = "CHR 2024 Health Outcomes Score",
+       title = "Four Sample Comparison") 
+```
+
+## Numerical Summary: Four Samples
+
+```{r}
+#| echo: true
+
+ohio_7 |> group_by(hfactor) |> reframe(lovedist(h_out24))
+```
+
+- How will we analyze these data?
+
+## ANOVA model (Comparing 4 samples)
+
+- Our analysis will use a linear model, accompanied by an **analysis of variance (ANOVA)** table.
+- We could also run an **ANOVA** table with or without pooling standard deviations.
+- We'll worry about this model only if the sample data are **very severely** non-Normal.
+
+## ANOVA for Question 3
+
+```{r}
+#| echo: true
+m3 <- lm(h_out24 ~ hfactor, data = ohio_7)
+anova(m3)
+```
+
+- What can we conclude here?
+
+## Model Parameters
+
+```{r}
+#| echo: true
+model_parameters(m3)
+```
+
+- What does this suggest?
+
+## Meaning of indicator variables?
+
+```
+h_out24 = -0.51 + 0.41 hfactor(Low) 
+           + 0.81 hfactor(High) + 1.20 hfactor(Best)
+```
+
+group  | `hfactorLow` | `hfactorHigh` | `hfactorBest`
+----: | :-------: | :--------: | :--------:
+Worst  | 0 | 0 | 0
+Low  | 1 | 0 | 0
+High   | 0 | 1 | 0
+Best | 0 | 0 | 1
+
+- So what is the predicted `h_out24` score for a county in each behavior group, according to this model?
+
+## Calculating Estimates
+
+```
+h_out24 = -0.51 + 0.41 hfactor(Low) 
+           + 0.81 hfactor(High) + 1.20 hfactor(Best)
+```
+
+Category | Predicted `h_out24`
+-------- | :----------------:
+Worst | -0.51 
+Low | -0.51 + 0.41 = -0.10
+High | -0.51 + 0.81 = 0.30
+Best | -0.51 + 1.20 = 0.69
+
+## Recall Observed Group Means
+
+```{r}
+#| echo: true
+ohio_7 |> group_by(hfactor) |>
+  summarise(n = n(), mean = mean(h_out24))
+```
+
+Forgive the small rounding error. This matches the model, exactly.
+
+Next time, we'll do more.
+
+# Research Question 4
+
+## Question 4
+
+How large is the mean difference in 2024 Health Outcomes scores across the three groups of Ohio counties defined by their 2019 social associations?
+
+Key variables:
+
+- `h_out24` (numeric)
+- `soc_gp` (factor with 3 levels)
+
+Comparing **Three** Means with Independent Samples
+
+## DTDP for Question 4
+
+```{r}
+#| echo: true
+#| output-location: slide
+ggplot(ohio_7, aes(x = soc_gp, y = h_out24)) +
+  geom_violin(aes(fill = soc_gp)) + 
+  geom_boxplot(width = 0.2, fill = "white") +
+  stat_summary(fun = mean, geom = "point", 
+               size = 2, col = "red") +
+  scale_fill_viridis_d(option = "plasma", alpha = 0.4) +
+  guides(fill = "none") +
+  labs(x = "CHR 2019 Social Associations Group",
+       y = "CHR 2024 Health Outcomes Score",
+       title = "Three Sample Comparison") 
+```
+
+## Numerical Summary: Three Samples
+
+```{r}
+#| echo: true
+
+ohio_7 |> group_by(soc_gp) |> reframe(lovedist(h_out24))
+```
+
+## ANOVA for Question 4
+
+```{r}
+#| echo: true
+m4 <- lm(h_out24 ~ soc_gp, data = ohio_7)
+anova(m4)
+```
+
+- What can we conclude here?
+
+## Model Parameters
+
+```{r}
+#| echo: true
+model_parameters(m4)
+```
+
+- We'll stop here for now, but there's more that we need to think about in evaluating these results...
+
+## Session Information
+
+```{r}
+#| echo: true
+
+xfun::session_info()
+```
+
