@@ -19,9 +19,10 @@ format:
 - Data from Class 07: Ohio's 88 Counties
 - One-Factor Analysis of Variance (ANOVA)
   - Using Regression to Develop an ANOVA model
-  - Methods for multiple pairwise comparisons
+  - Pairwise comparisons of means
+    - Getting actual simultaneous confidence intervals
+    - Bonferroni and Tukey HSD procedures
   - Checking ANOVA Model Assumptions
-  - Bayesian fitting of an ANOVA model
 - Favorite Movies: Discussion 1
 
 
@@ -31,70 +32,45 @@ format:
 #| echo: true
 #| message: false
 
-library(janitor)
-library(patchwork)
-library(readxl)
-library(MKinfer)
-library(rstanarm)
-library(DescTools)  ## new: used for Bonferroni         
-library(easystats)
-library(tidyverse)
-
-theme_set(theme_bw())
 knitr::opts_chunk$set(comment = NA)
 
 source("c08/data/Love-431.R") # for the lovedist() function
+
+library(janitor)
+library(patchwork)
+library(readxl)
+library(DescTools)  ## NEW - for Bonferroni and Tukey HSD CIs
+library(easystats)
+library(tidyverse)
+
+theme_set(theme_lucid())
 ```
 
-# Get the data
-
-## `ohio_2019.xlsx` codebook
-
-![](c08/images/ohio_2019_codebook.png)
-
-## Data Ingest from Class 07
+## Creating the `ohio_8` tibble
 
 ```{r}
 #| echo: true
-
-oh19 <- read_xlsx("c08/data/ohio_2019.xlsx") |>
-  janitor::clean_names()
-```
-
-![](c08/images/ohio_2019_excel.png)
-
-## Creating `ohio_8` from `oh19`
-
-```{r}
-#| echo: true
-ohio_8 <- oh19 |>
-  dplyr::select(code, county, h_out24, h_fac19rk) |>
+ohio_8 <- read_xlsx("c08/data/ohio_2019.xlsx") |>
+  janitor::clean_names() |>
+  select(county, h_out24, h_fac19rk, low_bwt = lbw_24) |>
   mutate(hfactor = case_when(
     h_fac19rk <= 22 ~ "Best",
     h_fac19rk > 22 & h_fac19rk <= 44 ~ "High",
     h_fac19rk > 44 & h_fac19rk <= 66 ~ "Low",
     h_fac19rk > 66 ~ "Worst")) |>
   mutate(hfactor = fct_relevel(factor(hfactor), 
-             "Worst", "Low", "High", "Best")) |>
-  mutate(across(where(is.character), as_factor)) |>
-  mutate(county = as.character(county),
-         code = as.character(code)) |>
-  droplevels()
+             "Worst", "Low", "High", "Best")) 
+
+ohio_8 |> filter(county %in% c("Cuyahoga", "Geauga", "Portage"))
 ```
 
-## `ohio_8` tibble
-
-```{r}
-#| echo: true
-
-ohio_8
-```
 
 ## Key Variables from `ohio_8`
 
 - `h_out24` = CHR 2024 Health Outcomes Score^[The CHR Health Outcomes score includes measures of length of life and quality of life. More positive results here are better (opposite of CHR's scale.)]
 - `hfactor` = 4-level factor (Worst, Low, High, Best) grouped by CHR 2019 Health Factors Score^[The CHR Health Factors score includes measures of health behaviors, clinical care, social and economic factors, and the physical environment.]
 - `county` name and FIPS `code` used as identifiers
+- `low_bwt` low birth weight rate reported in CHR 2024
 
 ## Today's Question
 
@@ -257,11 +233,11 @@ pf(q = 67.115, df1 = 3, df2 = 84, lower.tail = FALSE)
 - Is that surprising or exciting here?
 - What more would we like to know?
 
-## 95% CIs for the group means
+## 99% CIs for the group means
 
 ```{r}
 #| echo: true
-means_1 <- estimate_means(fit1, ci = 0.95)
+means_1 <- estimate_means(fit1, ci = 0.99)
 
 means_1
 ```
@@ -271,7 +247,7 @@ means_1
 ```{r}
 #| echo: true
 plot(visualisation_recipe(means_1)) + 
-  labs(title = "Estimated group means and 95% CIs from fit1")
+  labs(title = "Estimated group means and 99% CIs from fit1")
 ```
 
 
@@ -292,34 +268,21 @@ ggplot(ohio_8, aes(x = hfactor, y = h_out24, fill = hfactor)) +
   guides(fill = "none") +
   labs(x = "CHR 2019 Health Factors Group",
        y = "CHR 2024 Health Outcomes Score",
-       title = "Model `fit1` Estimates with 95% CIs") 
+       title = "Model `fit1` Estimates with 99% CIs") 
 ```
 
 # Multiple Pairwise Comparisons
 
 ## Multiple Pairwise Comparisons
 
-- Can we identify pairwise comparisons of means that show meaningful differences?
+ANOVA suggests that the means aren't likely to all be the same, but we really want to make pairwise comparisons. For example, is Best meaningfully different from High?
 
 There are two (main) methods we'll study to estimate the difference between specific pairs of means with uncertainty intervals, while dealing with the problem of multiple comparisons.
 
-- Holm-Bonferroni pairwise comparisons (today)
-- Tukey's HSD (Honestly Significant Differences) approach (soon)
+- Bonferroni pairwise comparisons
+- Tukey's HSD (Honestly Significant Differences) approach
 
-## Compare `behavior` group means?
-
-ANOVA suggests that the means aren't likely to all be the same, but we really want to make pairwise comparisons...
-
-```{r}
-#| echo: true
-estimate_means(fit1, ci = 0.99)
-```
-
-For example, is Best meaningfully different from High?
-
-## Just run a bunch of t tests?
-
-Assumes you need no adjustment for the fact that you are doing multiple comparisons at once.
+## Just run all of the pooled t tests?
 
 ```{r}
 #| echo: true
@@ -383,8 +346,7 @@ If we do 6 tests, we could reduce the necessary $\alpha$ to 0.01 / 6 = 0.00167 a
 
 ## requires library(DescTools)
 
-PostHocTest(aov(fit1), method = "bonferroni", 
-            conf.level = 0.99)
+PostHocTest(aov(fit1), method = "bonferroni", conf.level = 0.99)
 ```
 
 ## Plotting the Bonferroni intervals
@@ -393,62 +355,82 @@ PostHocTest(aov(fit1), method = "bonferroni",
 #| echo: true
 
 par(mar=c(3,7,3,3), las = 1)
-plot(PostHocTest(aov(fit1), method = "bonferroni",
-      conf.level = 0.99))
+plot(PostHocTest(aov(fit1), method = "bonferroni", conf.level = 0.99))
+```
+
+## What about Tukey HSD intervals?
+
+Tukey’s HSD approach is a better choice than Bonferroni for **pre-planned comparisons** with a **balanced (or nearly balanced)** design. Which should we use here?
+
+```{r}
+#| echo: true
+
+PostHocTest(aov(fit1), method = "hsd", conf.level = 0.99, ordered = TRUE)
+```
+
+## Plot means with Tukey HSD CIs
+
+```{r}
+#| echo: true
+
+par(mar=c(3,10,3,3), las = 1)
+plot(PostHocTest(aov(fit1), method = "hsd", conf.level = 0.99))
 ```
 
 # Standing Break
 
-## Better Approach: Holm-Bonferroni
+## Comparing Low Birth Weight Rates
 
-Suppose you have $m$ comparisons, with p-values sorted from low to high as $p_1$, $p_2$, ..., $p_m$.
-
-- Is $p_1 < \alpha/m$? If so, reject $H_1$ and continue, otherwise STOP.
-- Is $p_2 < \alpha/(m-1)$? If so, reject $H_2$ and continue, else STOP.
-- and so on...
-
-## Holm-Bonferroni Approach
-
-Uniformly more powerful than Bonferroni, while preserving the overall false positive rate at $\alpha$. But only the *p* values change here!
-
-```{r}
-#| echo: true
-estimate_contrasts(fit1, ci = 0.99, p_adjust = "holm")
-```
-
-## Building a Lighthouse Plot
-
-Lighthouse plots represent the estimated means and their CI range (in black), while the grey areas show the CI range of the difference (as compared to the point estimate). 
+How large is the mean difference in low birth weight rates across the four groups of Ohio counties defined by their 2019 Health Factors rankings?
 
 ```{r}
 #| echo: true
 #| output-location: slide
-
-fit1 <- lm(h_out24 ~ hfactor, data = ohio_8)
-contr1 <- estimate_contrasts(fit1, 
-                   contrast = "hfactor", ci = 0.99)
-
-plot(contr1, estimate_means(fit1, by = "hfactor")) +
-  labs(subtitle = "Means with 99% confidence intervals")
+ggplot(ohio_8, aes(x = hfactor, y = low_bwt)) +
+  geom_violin(aes(fill = hfactor)) + 
+  geom_boxplot(width = 0.2, fill = "white") +
+  stat_summary(fun = mean, geom = "point", 
+               size = 2, col = "red") +
+  scale_fill_viridis_d(option = "plasma", alpha = 0.4) +
+  guides(fill = "none") +
+  labs(x = "CHR 2019 Health Factors Group",
+       y = "Low Birth Weight Rates (2016-22)",
+       title = "Comparing Four Independent Samples") 
 ```
 
-- If both the upper and lower beams move in the same direction, then the difference is pretty strong.
-
-# Bayes fit for ANOVA model
-
-## Bayesian ANOVA fit
+## Numerical Summary
 
 ```{r}
 #| echo: true
 
-set.seed(431)
-fit2 <- stan_glm(h_out24 ~ hfactor, 
-                 data = ohio_8, refresh = 0)
-
-model_parameters(fit2) 
+ohio_8 |> group_by(hfactor) |> reframe(lovedist(low_bwt))
 ```
 
-# Checking ANOVA Assumptions
+## ANOVA table for smoking
+
+```{r}
+#| echo: true
+
+fit2 <- lm(low_bwt ~ hfactor, data = ohio_8)
+anova(fit2) # ANOVA table
+```
+
+## Comparing Low Birth Weight Rates: Tukey HSD 95% CIs
+
+```{r}
+#| echo: true
+
+par(mar=c(3,10,3,3), las = 1)
+plot(PostHocTest(aov(fit2), method = "hsd", conf.level = 0.95))
+```
+
+## Low Birth Weight Tukey HSD 95% CIs
+
+```{r}
+#| echo: true
+
+PostHocTest(aov(fit2), method = "hsd", conf.level = 0.95)
+```
 
 ## ANOVA Assumptions {.smaller}
 
@@ -461,7 +443,7 @@ The assumptions behind analysis of variance are those of a linear model. Of spec
 
 Happily, the ANOVA F test is fairly robust to violations of the Normality assumption.
 
-## Check Normality assumption
+## Normality for first example
 
 Normal Q-Q plot of `fit1` regression residuals
 
@@ -470,12 +452,21 @@ Normal Q-Q plot of `fit1` regression residuals
 plot(fit1, which = 2, col = "blue")
 ```
 
+## Normality for LBW Model
+
+Normal Q-Q plot of `fit2` regression residuals
+
+```{r}
+#| echo: true
+plot(fit2, which = 2, col = "blue")
+```
+
 ## Other Checks to come...
 
 ```{r}
 #| echo: true
 
-plot(check_model(fit1))
+plot(check_model(fit1), detrend = FALSE)
 ```
 
 # Favorite Movies Discussion 1
@@ -487,3 +478,4 @@ plot(check_model(fit1))
 
 xfun::session_info()
 ```
+
