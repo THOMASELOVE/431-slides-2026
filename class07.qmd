@@ -504,7 +504,7 @@ model_parameters(fit1, ci = 0.90) |>
 
 ## Interpreting the Pooled t result (2/2)
 
-When we generalize beyond these 464 subjects with diabetes to the population they were **selected at random** from, then our data are **compatible** (at the 90% confidence level) with population mean differences in LDL between 0.02 and 14.32 mg/dl, depending on the **assumptions of our linear model** (paired t test) being correct.
+When we generalize beyond these 464 subjects with diabetes to the population they were **selected at random** from, then our data are **compatible** (at the 90% confidence level) with population mean differences in LDL between 0.02 and 14.32 mg/dl, depending on the **assumptions of our linear model** (pooled t test) being correct.
 
 ## Estimate 2: Bayesian linear model
 
