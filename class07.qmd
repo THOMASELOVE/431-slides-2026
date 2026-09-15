@@ -16,12 +16,14 @@ format:
 
 ## Today's Agenda
 
-- New Data: Ohio's 88 Counties
+- What does "Normalish" data look like?
 - Comparing Two Samples
+  - Paired vs. Independent Samples
+  - Checking Assumptions
   - How should we interpret an uncertainty interval?
-- Comparing More than Two Independent Samples
-  - Analysis of Variance (ANOVA)
-  - Using Regression to Develop an ANOVA model
+- Transforming an Outcome (see [Chapter 7](https://thomaselove.github.io/431-book/))
+  - The importance of power transformations
+  - Tukey's ladder and the Box-Cox plot
 
 ## Load packages and set theme
 
@@ -40,368 +42,329 @@ library(kableExtra)
 library(MKinfer)
 library(rstanarm)
 library(car)         
-library(ggdist)       
 library(easystats)
 library(tidyverse)
 
 theme_set(theme_bw())
 ```
 
-## `ohio_2019.xlsx` codebook
+## A Simulated Data Set
 
-![](c07/images/ohio_2019_codebook.png)
+```{r}
+#| echo: false
 
-## The `ohio_2019.xlsx` file
+## Simulation Code
 
-![](c07/images/ohio_2019_excel.png)
+set.seed(431)
+dat07 <- tibble(
+  var1 = rnorm(n = 125, mean = 100, sd = 15) + 4,
+  var2 = 100 + 7.5*rt(n = 125, df = 2, ncp = 0),
+  var3 = 0.5*rt(n = 125, df = 5, ncp = 90) + 48,
+  var4 = runif(n = 125, min = 80, max = 120) + 3,
+  var5 = 17+100*rbeta(n = 125, shape1 = 5, shape2 = 1),
+  var6 = rnorm(n = 125, mean = 96, sd = 18) + 6,
+)
+dat07$var1[88] <- 54.41
+dat07$var1[47] <- 149.32
+dat07$var2[123] <- 99
 
-## Data Ingest
+## end of Simulation Code
+```
+
+```{r}
+#| echo: true
+dat07
+```
+
+
+::: aside
+
+Simulation details for `dat07` tibble are in the Quarto code.
+
+:::
+
+## Numerical Summaries
 
 ```{r}
 #| echo: true
 
-oh19 <- read_xlsx("c07/data/ohio_2019.xlsx") |>
-  janitor::clean_names()
+res1 <- dat07 |> reframe(lovedist(var1)) |> mutate(variable = "var1")
+res2 <- dat07 |> reframe(lovedist(var2)) |> mutate(variable = "var2")
+res3 <- dat07 |> reframe(lovedist(var3)) |> mutate(variable = "var3")
+res4 <- dat07 |> reframe(lovedist(var4)) |> mutate(variable = "var4")
+res5 <- dat07 |> reframe(lovedist(var5)) |> mutate(variable = "var5")
+res6 <- dat07 |> reframe(lovedist(var6)) |> mutate(variable = "var6")
 
-oh19
+rbind(res1, res2, res3, res4, res5, res6) |> relocate(variable) |>
+  kable(digits = c(0, 0, 0, 2, 2, 2, 2, 1, 1, 1, 1)) |>
+  kable_styling(font_size = 24)
 ```
 
-## Selecting Variables for Today's Class
 
-```{r}
-#| echo: true
 
-ohio_7 <- oh19 |>
-  select(county, h_out24, red_2024, inactive, 
-         h_fac19rk, h_out19rk, social)
-
-ohio_7
-```
-
-## Variables Selected: `ohio_7`
-
-Variable | Description
-:--------: | :-------------------------------------
-`county` | County name
-`h_out24` | CHR 2024 Health Outcomes Score
-`red_2024` | % of 2024 Election Ballots for Trump/Vance
-`inactive` | 2019: % 18+ without leisure physical activity
-`h_fac19rk` | CHR 2019 Health Factors Rank 
-`h_out19rk` | CHR 2019 Health Outcomes Rank
-`social` | 2019: Membership associations / 100K pop.
-
-## `data_codebook()` result
-
-```{r}
-#| echo: true
-data_codebook(ohio_7)
-```
-
-## Data Management for `ohio_7`
-
-1. Store ranks (1 = best, 88 = worst) of counties based on `h_out24` in `h_out24rk`.
-
-```{r}
-#| echo: true
-ohio_7 <- ohio_7 |>
-  mutate(h_out24rk = 89-row_number(h_out24))
-
-ohio_7 |> select(county, h_out24, h_out24rk) |>
-  filter(county %in% c("Cuyahoga", "Delaware", "Geauga", "Scioto"))
-```
-
-## Data Management for `ohio_7`
-
-2. Create two groups in `sedentary` to reflect top third and bottom third of counties by `inactive`
-
-```{r}
-#| echo: true
-ohio_7 <- ohio_7 |>
-  mutate(sedentary = case_when(
-    inactive >= quantile(inactive, 0.67) ~ "More",
-    inactive < quantile(inactive, 0.33) ~ "Less"))
-
-ohio_7 |> tabyl(sedentary) |> adorn_pct_formatting()
-```
-
-## Data Management for `ohio_7`
-
-3. Place into `hfactor` four groups of equal size derived from the `h_fac19rk` data.
-
-```{r}
-#| echo: true
-ohio_7 <- ohio_7 |>
-  mutate(hfactor = case_when(
-    h_fac19rk <= 22 ~ "Best",
-    h_fac19rk > 22 & h_fac19rk <= 44 ~ "High",
-    h_fac19rk > 44 & h_fac19rk <= 66 ~ "Low",
-    h_fac19rk > 66 ~ "Worst"))
-
-ohio_7 |> group_by(hfactor) |> reframe(lovedist(h_fac19rk))
-```
-
-## Data Management for `ohio_7`
-
-4. Place into `soc_grp` three groups of (approximately) equal size derived from the `social` data.
-
-```{r}
-#| echo: true
-ohio_7 <- ohio_7 |>
-  mutate(soc_gp = cut_number(social, n = 3))
-
-ohio_7 |> tabyl(soc_gp) |> adorn_pct_formatting()
-
-ohio_7 <- ohio_7 |> 
-  mutate(soc_gp = fct_recode(factor(soc_gp), 
-                             "Small" = "[3.8,10.2]",
-                             "Medium" = "(10.2,12.9]",
-                             "Large" = "(12.9,19.3]"))
-```
-
-## One of Today's Outcomes
-
-- **red_2024** = % of 2024 Presidential Election Ballots for Trump/Vance
-
-```{r}
-#| echo: true
-ohio_7 |> reframe(lovedist(red_2024))
-
-ohio_7 |> select(county, red_2024) |>
-  filter(county %in% c("Cuyahoga", "Putnam"))
-```
-
-## Another of Today's Outcomes
-
-- **h_out24** (outcomes) = quantity that describes the county's premature death and quality of life results, weighted equally and standardized (z scores), in 2024.
-  - Higher (more positive) values indicate better outcomes in this county.
-
-```{r}
-#| echo: true
-ohio_7 |> reframe(lovedist(h_out24))
-```
-
-## Create Factors, Drop Unused Levels
-
-```{r}
-#| echo: true
-ohio_7 <- ohio_7 |> 
-  mutate(across(where(is.character), as_factor)) |>
-  mutate(county = as.character(county)) |>
-  droplevels()
-  
-glimpse(ohio_7)
-```
-
-# Research Question 1
-
-## Question 1
-
-What is the difference in the average % of Republican presidential election ballots in 2024 between the most sedentary and least sedentary thirds of Ohio counties (as measured in 2019)?
-
-Key variables:
-
-- `red_2024` (numeric)
-- `sedentary` (factor with 2 levels)
-
-Comparing Two Means: Paired or Independent Samples?
-
-## DTDP. What's wrong here?
-
-```{r}
-#| echo: true
-
-ggplot(ohio_7, aes(x = sedentary, y = red_2024)) +
-  geom_boxplot()
-```
-
-## % Republican by Sedentary
+## Histograms of `dat07` variables
 
 ```{r}
 #| echo: true
 #| output-location: slide
 
-ques1 <- ohio_7 |> filter(complete.cases(sedentary))
+H1 <- ggplot(dat07, aes(x = var1)) + labs(title = "Histogram of var1") +
+  geom_histogram(binwidth = 6, col = "black", fill = "skyblue") 
+H2 <- ggplot(dat07, aes(x = var2)) + labs(title = "Histogram of var2") +
+  geom_histogram(binwidth = 6, col = "black", fill = "plum")
+H3 <- ggplot(dat07, aes(x = var3)) + labs(title = "Histogram of var3") +
+  geom_histogram(binwidth = 6, col = "black", fill = "coral") 
+H4 <- ggplot(dat07, aes(x = var4)) + labs(title = "Histogram of var4") +
+  geom_histogram(binwidth = 3, col = "black", fill = "aquamarine")
+H5 <- ggplot(dat07, aes(x = var5)) + labs(title = "Histogram of var5") +
+  geom_histogram(binwidth = 4, col = "black", fill = "slateblue")
+H6 <- ggplot(dat07, aes(x = var6)) + labs(title = "Histogram of var6") +
+  geom_histogram(binwidth = 6, col = "black", fill = "burlywood") 
 
-ggplot(ques1, aes(x = sedentary, y = red_2024)) +
-  geom_violin(aes(fill = sedentary)) + 
-  geom_boxplot(width = 0.2, fill = "white", notch = TRUE) +
-  stat_summary(fun = mean, geom = "point", 
-               size = 2, col = "red") +
-  scale_fill_viridis_d(option = "plasma", alpha = 0.4) +
-  guides(fill = "none") +
-  labs(y = "% of votes for Republicans in 2024",
-       title = "Two Sample Comparison") +
-  coord_flip()
+(H1 + H2 + H3) / (H4 + H5 + H6)
 ```
 
-## Summarizing the Sample
-
-Numerical Summary with `lovedist()` from `Love-431.R`.
-
-```{r}
-#| echo: true
-
-ques1 |> group_by(sedentary) |> 
-  reframe(lovedist(red_2024))
-```
-
-- Which group has the larger sample mean `red_2024`? 
-- Can we reasonably pool standard deviations?
-- What can we say about skew in each group?
-
-## Q1: Comparison with t-test/OLS
-
-What conclusions can we draw from this pooled t approach?
-
-```{r}
-#| echo: true
-m1a <- t.test(red_2024 ~ sedentary, conf.level = 0.95, 
-              var.equal = TRUE, data = ques1)
-model_parameters(m1a)
-```
-
-## Q1: Comparison with t-test/OLS
-
-Are these the same results?
-
-```{r}
-#| echo: true
-m1b <- lm(red_2024 ~ sedentary, data = ques1)
-model_parameters(m1b, conf.level = 0.95)
-```
-
-## Q1: Comparison with Welch's t
-
-```{r}
-#| echo: true
-m1c <- t.test(red_2024 ~ sedentary, conf.level = 0.95, 
-              var.equal = FALSE, data = ques1)
-model_parameters(m1c)
-```
-
-## Q1: Comparison with bootstrap
-
-```{r}
-#| echo: true
-set.seed(43107)
-boot.t.test(red_2024 ~ sedentary, data = ques1, R = 2000,
-            var.equal = FALSE, conf.level = 0.95)
-```
-
-## Q1 estimates
-
-Approach | Estimate | 95% confidence interval
-:--------: | :--------: | :-----------------------:
-Pooled t | 11.99 | (6.65, 17.32)
-Welch t  | 11.99 | (6.60, 17.37)
-Bootstrap | 12.05 | (6.69, 17.12)
-
-- Which of these should we choose?
-  - Or does it not matter much?
-- Once we've made a choice, how can we describe the result properly?
-
-## Selecting the OLS/pooled t (1/2)
-
-- Point Estimate: 11.99
-- 95% pooled t Confidence Interval: (6.65, 17.32)
-
-Our best point estimate for the true difference (More Sedentary - Less Sedentary) is 11.99 percentage points in the % of Republican voters in 2024. 
-
-The confidence interval reflects imprecision in the population estimate, based only on assuming that the counties in our sample are selected at random from the population of interest.
-
-## Selecting the OLS/pooled t (2/2)
-
-- Point Estimate: 11.99 (more - less sedentary)
-
-- Are these counties in fact selected at random?
-
-When we generalize beyond these counties to the population they were selected at random from, then our data are compatible (at the 95% confidence level) with differences in the population means (more sedentary - less sedentary) between 6.65 and 17.32 percentage points, depending on the assumptions of our pooled t procedure (or linear model) being correct.
-
-## Selecting the Bootstrap (1/2)
-
-- Point Estimate: 12.05
-- 95% bootstrap Confidence Interval: (6.69, 17.12)
-
-The confidence interval reflects imprecision in the population estimate, based only on assuming that the counties are selected at random from the population of interest.
-
-- So what population of counties were these "selected at random from"?
-
-## Selecting the Bootstrap (2/2)
-
-- Point Estimate: 12.05 (more - less sedentary)
-
-When we generalize beyond these counties to the population they were selected at random from, then our data are compatible (at the 95% confidence level) with differences in the population means (more sedentary - less sedentary) between 6.69 and 17.12 percentage points, depending on the assumptions of our bootstrap procedure being correct.
-
-# Standing Break, followed by Research Question 2
-
-## Question 2
-
-What can we say about the difference between the rank in Health Outcomes Z-score for CHR 2024, and the rank in Health Outcomes Z-score for CHR 2019, on average, across Ohio's 88 counties?
-
-Key variables:
-
-- `h_out24rk` (numeric: 1 = best, 88 = worst)
-- `h_out19rk` (numeric: 1 = best, 88 = worst)
-
-Comparing Two Means: Paired or Independent Samples?
-
-## Calculating Paired Differences
-
-- Let's use rank in 2024 - rank in 2019, as above, which makes **negative** numbers improvements from 2019 to 2024.
-
-```{r}
-#| echo: true
-#| fig-height: 2
-#| fig-width: 10
-ques2 <- ohio_7 |> 
-    mutate(out_d = h_out24rk - h_out19rk)
-
-ques2 |> select(county, h_out24rk, h_out19rk, out_d) |>
-    filter(county %in% c("Adams", "Cuyahoga"))
-```
-
-## DTDP for Paired Differences
+## Three-Plot Summary for `var01`
 
 ```{r}
 #| echo: true
 #| output-location: slide
 
-bw <- 2 # specify width of bins in histogram
+plot1A <- ggplot(dat07, aes(sample = var1)) +
+  geom_qq(shape = 21, fill = "skyblue") + geom_qq_line(col = "red") + 
+  labs(title = "Normal Q-Q plot of var1", y = "var1", x = "Standard Normal")
+plot1B <- ggplot(dat07, aes(x = var1)) +
+  geom_histogram(binwidth = 6, col = "black", fill = "skyblue") + 
+  stat_function(fun = function(x)
+    dnorm(x, mean = mean(dat07$var1, na.rm = TRUE),
+          sd = sd(dat07$var1,na.rm = TRUE)) * 
+      length(dat07$var1) * 6,  
+    geom = "area", alpha = 0.5, fill = "linen", col = "black") +
+  labs(title = "Histogram of var1", y = "")
+plot1C <- ggplot(dat07, aes(x = var1, y = "")) +
+  geom_violin(fill = "skyblue") + geom_boxplot(width = 0.3) +
+  stat_summary(fun = "mean", geom = "point", col = "red") +
+  labs(title = "Boxplot of var1", y = "", x = "var1")
 
-p1 <- ggplot(ques2, aes(out_d)) +
-  geom_histogram(binwidth = bw, fill = "black", col = "yellow" ) +
-  stat_function(fun = function(x) {
-    dnorm(x, mean = mean(ques2$out_d, na.rm = TRUE),
-          sd = sd(ques2$out_d, na.rm = TRUE) ) *
-        length(ques2$out_d) * bw},
-    geom = "area", alpha = 0.5, fill = "lightblue", col = "blue") +
-  labs(x = "2024 - 2019 Rank", y = "", title = "Histogram")
+plot1A + (plot1B / plot1C + plot_layout(heights = c(2,1))) 
+```
 
-p2 <- ggplot(ques2, aes(sample = out_d)) +
+## Three-Plot Summary for `var02`
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+plot2A <- ggplot(dat07, aes(sample = var2)) +
+  geom_qq(shape = 21, fill = "plum") + geom_qq_line(col = "red") + 
+  labs(title = "Normal Q-Q plot of var2", y = "var2", x = "Standard Normal")
+plot2B <- ggplot(dat07, aes(x = var2)) +
+  geom_histogram(binwidth = 6, col = "black", fill = "plum") + 
+  stat_function(fun = function(x)
+    dnorm(x, mean = mean(dat07$var2, na.rm = TRUE),
+          sd = sd(dat07$var2,na.rm = TRUE)) * 
+      length(dat07$var2) * 6,  
+    geom = "area", alpha = 0.5, fill = "linen", col = "black") +
+  labs(title = "Histogram of var2", y = "")
+plot2C <- ggplot(dat07, aes(x = var2, y = "")) +
+  geom_violin(fill = "plum") + geom_boxplot(width = 0.3) +
+  stat_summary(fun = "mean", geom = "point", col = "red") +
+  labs(title = "Boxplot of var2", y = "", x = "var2")
+
+plot2A + (plot2B / plot2C + plot_layout(heights = c(2,1))) 
+```
+
+## Three-Plot Summary for `var03`
+
+```{r}
+#| echo: false
+
+plot3A <- ggplot(dat07, aes(sample = var3)) +
+  geom_qq(shape = 21, fill = "coral") + geom_qq_line(col = "red") + 
+  labs(title = "Normal Q-Q plot of var3", y = "var3", x = "Standard Normal")
+plot3B <- ggplot(dat07, aes(x = var3)) +
+  geom_histogram(binwidth = 6, col = "black", fill = "coral") + 
+  stat_function(fun = function(x)
+    dnorm(x, mean = mean(dat07$var3, na.rm = TRUE),
+          sd = sd(dat07$var3,na.rm = TRUE)) * 
+      length(dat07$var3) * 6,  
+    geom = "area", alpha = 0.5, fill = "linen", col = "black") +
+  labs(title = "Histogram of var3", y = "")
+plot3C <- ggplot(dat07, aes(x = var3, y = "")) +
+  geom_violin(fill = "coral") + geom_boxplot(width = 0.3) +
+  stat_summary(fun = "mean", geom = "point", col = "red") +
+  labs(title = "Boxplot of var3", y = "", x = "var3")
+
+plot3A + (plot3B / plot3C + plot_layout(heights = c(2,1))) 
+```
+
+## Three-Plot Summary for `var04`
+
+```{r}
+#| echo: false
+
+plot4A <- ggplot(dat07, aes(sample = var4)) +
+  geom_qq(shape = 21, fill = "aquamarine") + geom_qq_line(col = "red") + 
+  labs(title = "Normal Q-Q plot of var4", y = "var4", x = "Standard Normal")
+plot4B <- ggplot(dat07, aes(x = var4)) +
+  geom_histogram(binwidth = 4, col = "black", fill = "aquamarine") + 
+  stat_function(fun = function(x)
+    dnorm(x, mean = mean(dat07$var4, na.rm = TRUE),
+          sd = sd(dat07$var4,na.rm = TRUE)) * 
+      length(dat07$var4) * 4,  
+    geom = "area", alpha = 0.5, fill = "linen", col = "black") +
+  labs(title = "Histogram of var4", y = "")
+plot4C <- ggplot(dat07, aes(x = var4, y = "")) +
+  geom_violin(fill = "aquamarine") + geom_boxplot(width = 0.3) +
+  stat_summary(fun = "mean", geom = "point", col = "red") +
+  labs(title = "Boxplot of var4", y = "", x = "var3")
+
+plot4A + (plot4B / plot4C + plot_layout(heights = c(2,1))) 
+```
+
+## Three-Plot Summary for `var05`
+
+```{r}
+#| echo: false
+
+plot5A <- ggplot(dat07, aes(sample = var5)) +
+  geom_qq(shape = 21, fill = "slateblue") + geom_qq_line(col = "red") + 
+  labs(title = "Normal Q-Q plot of var5", y = "var5", x = "Standard Normal")
+plot5B <- ggplot(dat07, aes(x = var5)) +
+  geom_histogram(binwidth = 6, col = "black", fill = "slateblue") + 
+  stat_function(fun = function(x)
+    dnorm(x, mean = mean(dat07$var5, na.rm = TRUE),
+          sd = sd(dat07$var5,na.rm = TRUE)) * 
+      length(dat07$var5) * 6,  
+    geom = "area", alpha = 0.5, fill = "linen", col = "black") +
+  labs(title = "Histogram of var5", y = "")
+plot5C <- ggplot(dat07, aes(x = var5, y = "")) +
+  geom_violin(fill = "slateblue", alpha = 0.5) + geom_boxplot(width = 0.3) +
+  stat_summary(fun = "mean", geom = "point", col = "red") +
+  labs(title = "Boxplot of var5", y = "", x = "var5")
+
+plot5A + (plot5B / plot5C + plot_layout(heights = c(2,1))) 
+```
+
+## Three-Plot Summary for `var06`
+
+```{r}
+#| echo: false
+
+plot6A <- ggplot(dat07, aes(sample = var6)) +
+  geom_qq(shape = 21, fill = "burlywood") + geom_qq_line(col = "red") + 
+  labs(title = "Normal Q-Q plot of var6", y = "var6", x = "Standard Normal")
+plot6B <- ggplot(dat07, aes(x = var6)) +
+  geom_histogram(binwidth = 6, col = "black", fill = "burlywood") + 
+  stat_function(fun = function(x)
+    dnorm(x, mean = mean(dat07$var6, na.rm = TRUE),
+          sd = sd(dat07$var6,na.rm = TRUE)) * 
+      length(dat07$var6) * 6,  
+    geom = "area", alpha = 0.5, fill = "linen", col = "black") +
+  labs(title = "Histogram of var6", y = "")
+plot6C <- ggplot(dat07, aes(x = var6, y = "")) +
+  geom_violin(fill = "burlywood") + geom_boxplot(width = 0.3) +
+  stat_summary(fun = "mean", geom = "point", col = "red") +
+  labs(title = "Boxplot of var6", y = "", x = "var6")
+
+plot6A + (plot6B / plot6C + plot_layout(heights = c(2,1))) 
+```
+
+## New Data: Ohio's 88 Counties
+
+Adult obesity rates (% of adult county residents reporting body-mass index of 30 $kg/m^2$ or higher) from County Health Rankings Reports in 2014 and 2024.
+
+- CHR 2024 reports **2021** data from the Behavioral Risk Factor Surveillance System.
+- CHR 2014 reports **2010** data from the National Center for Chronic Disease Prevention and Health Promotion, Division of Diabetes Translation.
+
+## Obesity in Ohio Counties
+
+```{r}
+#| echo: true
+
+ohio88 <- read_csv("c07/data/ohio88.csv", show_col_types = FALSE) |>
+  janitor::clean_names() |> 
+  mutate(obesity_diff = obesity_2024 - obesity_2014) |>
+  select(county, obesity_2024, obesity_2014, obesity_diff)
+
+ohio88 |> filter(county %in% 
+                  c("Cuyahoga", "Geauga", "Lake", "Lorain", 
+                    "Medina", "Portage", "Summit"))
+```
+
+## Our Question
+
+What can we say about the mean of the difference between the county-level obesity rates reported in 2024 and those reported in 2014?
+
+- What is the outcome of interest?
+- What two groups are we comparing?
+- Do we have paired or independent samples here? 
+
+## Numerical Summaries
+
+```{r}
+#| echo: true
+
+res1 <- ohio88 |> reframe(lovedist(obesity_2024)) |> mutate(var = "2024")
+res2 <- ohio88 |> reframe(lovedist(obesity_2014)) |> mutate(var = "2014")
+res3 <- ohio88 |> reframe(lovedist(obesity_diff)) |> mutate(var = "diffs")
+
+rbind(res1, res2, res3) |> relocate(var) |>
+  kable(digits = c(0, 0, 0, 2, 2, 2, 2, 1, 1, 1, 1)) |>
+  kable_styling(font_size = 28)
+```
+
+
+## Plotting Paired Differences
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+p1 <- ggplot(ohio88, aes(sample = obesity_diff)) +
   geom_qq() +
   geom_qq_line(col = "red") +
-  labs(y = "2024 - 2019 Rank", x = "Standard Normal Distribution",
-    title = "Normal Q-Q plot")
+  labs(y = "2024 - 2014 difference", 
+       x = "Standard Normal Distribution",
+    title = "Changes in Adult Obesity, 2024-2014")
 
-p3 <- ggplot(ques2, aes(x = out_d, y = "")) +
+bw <- 1 # specify width of bins in histogram
+
+p2 <- ggplot(ohio88, aes(obesity_diff)) +
+  geom_histogram(binwidth = bw, fill = "black", col = "yellow" ) +
+  stat_function(fun = function(x) {
+    dnorm(x, mean = mean(ohio88$obesity_diff, na.rm = TRUE),
+          sd = sd(ohio88$obesity_diff, na.rm = TRUE) ) *
+        length(ohio88$obesity_diff) * bw},
+    geom = "area", alpha = 0.5, fill = "lightblue", col = "blue") +
+  labs(x = "2024 - 2014 difference", y = "", 
+       title = "Histogram of 88 Ohio Counties")
+
+p3 <- ggplot(ohio88, aes(x = obesity_diff, y = "")) +
   geom_violin(fill = "cornsilk") +
   geom_boxplot(width = 0.2) +
   stat_summary(fun = mean, geom = "point", shape = 16, col = "red") +
-  labs(y = "", x = "2024 - 2019 Rank", title = "Boxplot with Violin")
+  labs(y = "", x = "2024 - 2014 difference", 
+       title = "Boxplot with Violin: 88 Ohio Counties")
 
 p1 + (p2 / p3 + plot_layout(heights = c(2, 1))) +
-  plot_annotation(title = "2024 - 2019 Difference in CHR Health Outcome Rank", 
-  subtitle = "Negative Differences indicate improvements from 2019 to 2024")
-
-
+  plot_annotation(title = "2024 - 2014 Difference in CHR Adult Obesity Rates")
 ```
 
-## Numerical Summary of Data
+## Our paired differences
 
 ```{r}
 #| echo: true
-ques2 |> 
-   reframe(lovedist(out_d))
+
+ohio88 |> tabyl(obesity_diff) |> adorn_pct_formatting()
+```
+
+
+## Our 88 Paired Differences
+
+```{r}
+#| echo: true
+ohio88 |> reframe(lovedist(obesity_diff))
 ```
 
 What can we say about the distribution of paired differences in our sample?
@@ -414,16 +377,27 @@ What can we say about the distribution of paired differences in our sample?
 
 ```{r}
 #| echo: true
-m2a <- lm(out_d ~ 1, data = ques2)
+m2a <- lm(obesity_diff ~ 1, data = ohio88)
 
 model_parameters(m2a, conf.level = 0.95)
 ```
 
 ```{r}
 #| echo: true
-m2b <- t.test(ques2$out_d, conf.level = 0.95)
+m2b <- t.test(ohio88$obesity_diff, conf.level = 0.95)
 model_parameters(m2b)
 ```
+
+## Bayesian Linear Model
+
+```{r}
+#| echo: true
+
+set.seed(43101)
+m3 <- stan_glm(obesity_diff ~ 1, data = ohio88, refresh = 0)
+model_parameters(m3, conf.level = 0.95)
+```
+
 
 ## Bootstrap approach
 
@@ -431,15 +405,16 @@ model_parameters(m2b)
 #| echo: true
 
 set.seed(432071)
-boot.t.test(ques2$out_d, R = 2000, conf.level = 0.95)
+boot.t.test(ohio88$obesity_diff, R = 2000, conf.level = 0.95)
 ```
 
-## Q2 estimates
+## Our estimates
 
 Approach | Estimate | 95% confidence interval
 :--------: | :--------: | :-----------------------:
-OLS / t | 0 | (-1.95, 1.95)
-Bootstrap | -0.02 | (-1.88, 1.90)
+OLS / t | 9.40 | (8.77, 10.02)
+Bayes | 9.39 | (8.77, 10.03)
+Bootstrap | 9.40 | (8.78, 9.99)
 
 - Which of these should we choose?
   - Or does it not matter much?
@@ -447,202 +422,420 @@ Bootstrap | -0.02 | (-1.88, 1.90)
 
 ## Choosing OLS for Paired t
 
-- Point Estimate for mean difference = 0
-- 95% confidence interval (-1.95, 1.95)
+*Paired t result: Estimate = 9.40, 95% CI (8.77, 10.02)*
 
-When we generalize beyond these counties to the population they were **selected at random** from, then our data are **compatible** (at the 95% confidence level) with population mean differences in rank between -1.95 and 1.95, depending on the **assumptions of our linear model** (paired t test) being correct.
+- Our best point estimate for the true difference (2024-2014 reports on adult obesity) is 9.40 percentage points, based on our sample of 88 Ohio counties.
+- The confidence interval reflects imprecision in the population estimate, based on assuming that the counties in our sample are selected at random from the population of interest, and that the assumptions of our paired t procedure hold.
 
-# Research Question 3
+## Interpreting the Confidence Interval
 
-## Question 3
+*Paired t result: Estimate = 9.40, 95% CI (8.77, 10.02)*
 
-How large is the mean difference in 2024 Health Outcomes scores across the four groups of Ohio counties defined by their 2019 Health Factors rankings?
+When we generalize beyond these counties to the population they were **selected at random** from, then our data are **compatible** (at the 95% confidence level) with population mean differences in adult obesity rates between 8.77 and 10.02 percentage points, depending on the **assumptions of our linear model** (paired t test) being correct.
 
-Key variables:
+## Paired Samples Strategy (1)
 
-- `h_out24` (numeric)
-- `hfactor` (factor with 4 levels)
+Suppose we want to estimate an uncertainty interval for the mean of a set of paired differences.
 
-Comparing **Four** Means with Independent Samples
+- Calculate the paired differences, then plot them.
+- If the sample data are well described as "Normal", then use the OLS / paired t procedure to obtain a confidence interval, or a Bayesian model to obtain a credible interval.
 
-## DTDP for Question 3
+## Paired Samples Strategy (2)
 
-What's wrong here?
+- If the sample data are best described as "symmetric but with outliers", then use the bootstrap to obtain a confidence interval, although an OLS or Bayesian result may be quite similar.
+- If the sample data are best described as "substantially skewed", then consider whether you actually want to summarize with the mean, and consider whether a transformation might be helpful.
+
+# Standing Break
+
+## New Data: `dm464` from Classes 5-6
+
+```{r}
+#| echo: true
+dm464 <- read_xlsx("c07/data/dm464.xlsx") |>
+  janitor::clean_names() |>
+  select(id_code, ldl = ldl_start, statin = statin_start) |>
+  mutate(across(where(is.character), as_factor)) |>
+  mutate(id_code = as.character(id_code)) |>
+  mutate(stat_f = fct_recode(factor(statin), "Statin" = "1", "No" = "0"))
+
+head(dm464)
+```
+
+## What is our goal?
+
+Goal: 90% uncertainty interval for difference in average LDL between Statin and No Statin groups.
 
 ```{r}
 #| echo: true
 
-ggplot(ohio_7, aes(x = hfactor, y = h_out24)) +
-  geom_boxplot()
+dm464 |> group_by(stat_f) |> reframe(lovedist(ldl)) |> 
+  kable(digits = c(0, 0, 0, 2, 2, 2, 2, 0, 0, 0, 0)) |>
+  kable_styling(font_size = 24)
 ```
 
+::: {.incremental}
+- What are we comparing? What is our outcome? How many group means?
+- Are these paired or independent samples?
+:::
 
-## Re-order `hfactor` levels
+## Estimate 1: Pooled t procedure
+
+Pooled t procedure using `lm` (ordinary least squares)
 
 ```{r}
 #| echo: true
-
-ohio_7 |> tabyl(hfactor)  
-
-ohio_7 <- ohio_7 |>
-   mutate(hfactor = fct_relevel(hfactor, 
-             "Worst", "Low", "High", "Best"))
-
-ohio_7 |> tabyl(hfactor)             
+fit1 <- lm(ldl ~ stat_f, data = dm464)
+model_parameters(fit1, ci = 0.90) |> 
+  kable(digits = 2) |> kable_styling(font_size = 24)
 ```
 
+### Assumptions for Pooled t procedure
 
+1. Random sample from statin and no statin populations
+2. Each sample comes from a Normal population
+3. Equal population variances in the two statin groups
 
-## DTDP for Question 3
+## Interpreting the Pooled t result (1/2)
+
+*Pooled t result: Estimate = 7.17, 90% CI (0.02, 14.32)*
+
+- Our best point estimate for the true difference (Statin - No Statin) is 7.17 mg/dl in LDL cholesterol at baseline, based on our sample of 367 Statin and 97 No statin subjects with diabetes.
+- The confidence interval reflects imprecision in the population estimate, based on assuming that the people in our sample are selected at random from the population of interest, *and* that the assumptions of our pooled t procedure hold.
+
+## Interpreting the Pooled t result (2/2)
+
+When we generalize beyond these 464 subjects with diabetes to the population they were **selected at random** from, then our data are **compatible** (at the 90% confidence level) with population mean differences in LDL between 0.02 and 14.32 mg/dl, depending on the **assumptions of our linear model** (paired t test) being correct.
+
+## Estimate 2: Bayesian linear model
+
+If we use the default (weakly informative) prior, then the Bayesian model has essentially the same assumptions as the pooled t procedure:
 
 ```{r}
 #| echo: true
-#| output-location: slide
-ggplot(ohio_7, aes(x = hfactor, y = h_out24)) +
-  geom_violin(aes(fill = hfactor)) + 
-  geom_boxplot(width = 0.2, fill = "white") +
-  stat_summary(fun = mean, geom = "point", 
-               size = 2, col = "red") +
-  scale_fill_viridis_d(option = "plasma", alpha = 0.4) +
-  guides(fill = "none") +
-  labs(x = "CHR 2019 Health Factors Group",
-       y = "CHR 2024 Health Outcomes Score",
-       title = "Four Sample Comparison") 
+set.seed(4312)
+fit2 <- stan_glm(ldl ~ stat_f, data = dm464, refresh = 0)
+model_parameters(fit2, ci = 0.90) |> 
+  kable(digits = 2) |> kable_styling(font_size = 24)
 ```
 
-## Numerical Summary: Four Samples
+## Estimate 3: Welch's t procedure
+
+Welch's t procedure drops requirement of equal population variances
 
 ```{r}
 #| echo: true
-
-ohio_7 |> group_by(hfactor) |> reframe(lovedist(h_out24))
+fit3 <- t.test(ldl ~ stat_f, data = dm464)
+model_parameters(fit3, ci = 0.90)
 ```
 
-- How will we analyze these data?
+## Estimate 4: Bootstrap with pooling
 
-## ANOVA model (Comparing 4 samples)
-
-- Our analysis will use a linear model, accompanied by an **analysis of variance (ANOVA)** table.
-- We could also run an **ANOVA** table with or without pooling standard deviations.
-- We'll worry about this model only if the sample data are **very severely** non-Normal.
-
-## ANOVA for Question 3
+Bootstrap (percentile) procedure (with pooling) maintains assumption of equal population variances but does not require Normally distributed populations
 
 ```{r}
 #| echo: true
-m3 <- lm(h_out24 ~ hfactor, data = ohio_7)
-anova(m3)
+set.seed(43104)
+boot.t.test(ldl ~ stat_f, var.equal = TRUE, R = 2000,
+  data = dm464, conf.level = 0.90)
 ```
 
-- What can we conclude here?
+## Estimate 5: Bootstrap: unpooled
 
-## Model Parameters
+Bootstrap (percentile) procedure (without pooling) drops assumptions of equal population variances and of Normally distributed populations
 
 ```{r}
 #| echo: true
-model_parameters(m3)
+set.seed(43105)
+boot.t.test(ldl ~ stat_f, var.equal = FALSE, R = 2000,
+  data = dm464, conf.level = 0.90)
 ```
 
-- What does this suggest?
+## Results So Far{.smaller}
 
-## Meaning of indicator variables?
+- All methods assume random samples
+- Est. = point estimate of Statin - No Statin group mean difference
 
-```
-h_out24 = -0.51 + 0.41 hfactor(Low) 
-           + 0.81 hfactor(High) + 1.20 hfactor(Best)
-```
+Method | Est. | 90% Interval | Assumptions
+------ | --------- | -------------- | ----------------------------
+Pooled t | 7.17 | (0.02, 14.32) | Normality, equal variances
+Bayesian | 7.16 | (0.17, 14.65) | Same as pooled t, basically
+Welch t | 7.17 | (-0.36, 14.70) | Normality only
+Boot (pooled) | 7.25 | (0.18, 14.28) | Equal variances only
+Boot (Welch) | 7.06 | (0.87, 12.99) | Neither
 
-group  | `hfactorLow` | `hfactorHigh` | `hfactorBest`
-----: | :-------: | :--------: | :--------:
-Worst  | 0 | 0 | 0
-Low  | 1 | 0 | 0
-High   | 0 | 1 | 0
-Best | 0 | 0 | 1
+- So what do we need to look for in our data?
 
-- So what is the predicted `h_out24` score for a county in each behavior group, according to this model?
+## LDL by Statin prescription status
 
-## Calculating Estimates
-
-```
-h_out24 = -0.51 + 0.41 hfactor(Low) 
-           + 0.81 hfactor(High) + 1.20 hfactor(Best)
-```
-
-Category | Predicted `h_out24`
--------- | :----------------:
-Worst | -0.51 
-Low | -0.51 + 0.41 = -0.10
-High | -0.51 + 0.81 = 0.30
-Best | -0.51 + 1.20 = 0.69
-
-## Recall Observed Group Means
-
-```{r}
-#| echo: true
-ohio_7 |> group_by(hfactor) |>
-  summarise(n = n(), mean = mean(h_out24))
-```
-
-Forgive the small rounding error. This matches the model, exactly.
-
-Next time, we'll do more.
-
-# Research Question 4
-
-## Question 4
-
-How large is the mean difference in 2024 Health Outcomes scores across the three groups of Ohio counties defined by their 2019 social associations?
-
-Key variables:
-
-- `h_out24` (numeric)
-- `soc_gp` (factor with 3 levels)
-
-Comparing **Three** Means with Independent Samples
-
-## DTDP for Question 4
+Comparison Boxplot with Violins
 
 ```{r}
 #| echo: true
 #| output-location: slide
-ggplot(ohio_7, aes(x = soc_gp, y = h_out24)) +
-  geom_violin(aes(fill = soc_gp)) + 
-  geom_boxplot(width = 0.2, fill = "white") +
+
+ggplot(dm464, aes(x = ldl, y = stat_f)) +
+  geom_violin() +
+  geom_boxplot(aes(fill = stat_f), width = 0.3) +
   stat_summary(fun = mean, geom = "point", 
-               size = 2, col = "red") +
-  scale_fill_viridis_d(option = "plasma", alpha = 0.4) +
+               shape = 18, size = 4, col = "black") +
   guides(fill = "none") +
-  labs(x = "CHR 2019 Social Associations Group",
-       y = "CHR 2024 Health Outcomes Score",
-       title = "Three Sample Comparison") 
+  labs(y = "Statin prescription", x = "LDL Cholesterol (mg/dl)",
+       title = "LDL by Statin prescription")
 ```
 
-## Numerical Summary: Three Samples
+## LDL by Statin prescription status
+
+How about a pair of Normal Q-Q plots?
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+p1 <- dm464 |>
+  filter(stat_f == "Statin") |>
+  ggplot(aes(sample = ldl)) +
+  geom_qq() + geom_qq_line(col = "red") +
+  labs(title = "Statin group", y = "LDL Cholesterol (mg/dl)", 
+        x = "Standard Normal")
+
+p2 <- dm464 |>
+  filter(stat_f == "No") |>
+  ggplot(aes(sample = ldl)) +
+  geom_qq() + geom_qq_line(col = "red") +
+  labs(title = "No Statin group", y = "LDL Cholesterol (mg/dl)", 
+        x = "Standard Normal")
+
+p1 + p2 +
+  plot_annotation(title = "Normal Q-Q plots of LDL by Statin group")
+```
+
+## LDL by Statin prescription status
+
+A look at some numerical summaries...
 
 ```{r}
 #| echo: true
 
-ohio_7 |> group_by(soc_gp) |> reframe(lovedist(h_out24))
+dm464 |> group_by(stat_f) |> reframe(lovedist(ldl)) |> 
+  kable(digits = 2) |> kable_styling(font_size = 28)
 ```
 
-## ANOVA for Question 4
+- skew~1~ for "Statin" = (103.43 - 93)/39.51 = 0.26
+- skew~1~ for "No" = (96.26 - 91)/31.63 = 0.17
+
+Our rough cutoff for substantial right skew ~ 0.20.
+
+## What can we do about the skew?
+
+- Could we build a confidence interval for medians instead of means?
+  - Yes, with the bootstrap, for example see [Section 6.9.2](https://thomaselove.github.io/431-book/06_twogroups.html#bootstrap-ci-for-medians) of my text.
+
+- Could we transform the data in a non-linear way to better match assumptions?
+  - Yes, with the help of **Tukey's ladder** of power transformations.
+
+## Tukey's Ladder
+
+Power ($\lambda$) | -2 | -1 | -0.5 | 0 | 0.5 | *1* | 2 | 3
+------------: | ---: | ---: | ---: | -----: | ---: | ---: | ---: | ---:
+Transform | $\frac{1}{y^2}$ | $\frac{1}{y}$ | $\frac{1}{\sqrt{y}}$ | $\log{y}$ | $\sqrt{y}$ | *y* | $y^2$ | $y^3$
+
+- Start at no transformation ($\lambda$ = 1)
+  - Try moving in one direction, searching for a better result (more "Normal" distribution)
+  - Keep going until you start turning in the wrong direction.
+
+## Tukey's Ladder
+
+Power ($\lambda$) | -2 | -1 | -0.5 | 0 | 0.5 | 1 | 2 | 3
+------------: | ---: | ---: | ---: | -----: | ---: | ---: | ---: | ---:
+Transform | $\frac{1}{y^2}$ | $\frac{1}{y}$ | $\frac{1}{\sqrt{y}}$ | $\log{y}$ | $\sqrt{y}$ | $y$ | $y^2$ | $y^3$
+
+- These power transformations help us address skew, mainly. 
+- They're not much help if the data are symmetric, but have heavy/light tails.
+- Some transformations require all values to be positive. If they aren't, we can add a small amount to each observation until they are.
+
+## LDL (untransformed) by statin
+
+```{r}
+ggplot(dm464, aes(x = ldl, y = stat_f)) +
+  geom_violin() +
+  geom_boxplot(aes(fill = stat_f), width = 0.3) +
+  stat_summary(fun = mean, geom = "point", 
+               shape = 18, size = 4, col = "black") +
+  guides(fill = "none") +
+  labs(y = "Statin prescription", x = "LDL Cholesterol (mg/dl)",
+       title = "LDL by Statin prescription",
+       subtitle = "Each group is a bit skewed to the right")
+```
+
+- Let's try $\lambda = 2$, **squaring** the LDL values.
+
+## LDL squared, by statin
 
 ```{r}
 #| echo: true
-m4 <- lm(h_out24 ~ soc_gp, data = ohio_7)
-anova(m4)
+#| output-location: slide
+
+ggplot(dm464, aes(x = ldl^2, y = stat_f)) +
+  geom_violin() +
+  geom_boxplot(aes(fill = stat_f), width = 0.3) +
+  stat_summary(fun = mean, geom = "point", 
+               shape = 18, size = 4, col = "black") +
+  guides(fill = "none") +
+  labs(y = "Statin prescription", x = "LDL^2",
+       title = "LDL^2 by Statin prescription")
 ```
 
-- What can we conclude here?
+- Is this an improvement?
 
-## Model Parameters
+
+
+## Square root of LDL?
 
 ```{r}
 #| echo: true
-model_parameters(m4)
+#| output-location: slide
+
+ggplot(dm464, aes(x = sqrt(ldl), y = stat_f)) +
+  geom_violin() +
+  geom_boxplot(aes(fill = stat_f), width = 0.3) +
+  stat_summary(fun = mean, geom = "point", 
+               shape = 18, size = 4, col = "black") +
+  guides(fill = "none") +
+  labs(y = "Statin prescription", x = "sqrt(LDL)",
+       title = "Square Root of LDL by Statin prescription")
 ```
 
-- We'll stop here for now, but there's more that we need to think about in evaluating these results...
+## Logarithm of LDL?
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+ggplot(dm464, aes(x = log(ldl), y = stat_f)) +
+  geom_violin() +
+  geom_boxplot(aes(fill = stat_f), width = 0.3) +
+  stat_summary(fun = mean, geom = "point", 
+               shape = 18, size = 4, col = "black") +
+  guides(fill = "none") +
+  labs(y = "Statin prescription", x = "log(LDL)",
+       title = "Logarithm of LDL by Statin prescription")
+```
+
+## Inverse of LDL?
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+ggplot(dm464, aes(x = (1/ldl), y = stat_f)) +
+  geom_violin() +
+  geom_boxplot(aes(fill = stat_f), width = 0.3) +
+  stat_summary(fun = mean, geom = "point", 
+               shape = 18, size = 4, col = "black") +
+  guides(fill = "none") +
+  labs(y = "Statin prescription", x = "1/LDL",
+       title = "Inverse of LDL by Statin prescription")
+```
+
+## Which Transformation to Choose?
+
+Box-Cox approach: can we get a suggested "power" to use when transforming our outcome?
+
+- Specify the model then apply `boxCox` from `car` package.
+- Here, all values of our outcome (LDL) are strictly positive. 
+  - If not, we'd have to add a constant so that they were.
+
+### Tukey's Ladder
+
+Power ($\lambda$) | -2 | -1 | -0.5 | 0 | 0.5 | 1 | 2 | 3
+------------: | ---: | ---: | ---: | -----: | ---: | ---: | ---: | ---:
+Transform | $\frac{1}{y^2}$ | $\frac{1}{y}$ | $\frac{1}{\sqrt{y}}$ | $\log{y}$ | $\sqrt{y}$ | $y$ | $y^2$ | $y^3$
+
+## Box-Cox Suggestion?
+
+```{r}
+#| echo: true
+
+fit6 <- lm(ldl ~ stat_f, data = dm464)
+boxCox(fit6)
+```
+
+## Logarithm of LDL?
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+p1 <- dm464 |>
+  filter(stat_f == "Statin") |>
+  ggplot(aes(sample = log(ldl))) +
+  geom_qq() + geom_qq_line(col = "red") +
+  labs(title = "Statin group", y = "log(LDL Cholesterol)", 
+        x = "Standard Normal")
+
+p2 <- dm464 |>
+  filter(stat_f == "No") |>
+  ggplot(aes(sample = log(ldl))) +
+  geom_qq() + geom_qq_line(col = "red") +
+  labs(title = "No Statin group", y = "log(LDL Cholesterol)", 
+        x = "Standard Normal")
+
+p1 + p2 +
+  plot_annotation(title = "Normal Q-Q plots of log(LDL) by Statin group")
+```
+
+
+## Using the log transformation
+
+```{r}
+#| echo: true
+#| message: true
+fit7 <- lm(log(ldl) ~ stat_f, data = dm464)
+model_parameters(fit7, ci = 0.90)  
+```
+
+- How do we interpret these results?
+    - Should we exponentiate?
+
+## Using the log transformation
+
+```{r}
+#| echo: true
+fit7 <- lm(log(ldl) ~ stat_f, data = dm464)
+model_parameters(fit7, ci = 0.90)  
+```
+
+- Subjects with statin prescriptions have, on average, 0.05 higher *log(LDL)* than subjects without a statin prescription. 
+- The 90% confidence interval for the Statin - No Statin difference in *log (LDL)* is (-0.02, 0.12).
+
+## Exponentiating the Coefficients
+
+```{r}
+#| echo: true
+fit7 <- lm(log(ldl) ~ stat_f, data = dm464)
+model_parameters(fit7, ci = 0.90, exponentiate = TRUE)  
+```
+
+- After exponentiating, the point estimate for the comparison is 1.05, with 90% CI (0.98, 1.13).
+- Subjects with statin prescriptions have, on average, 5% higher LDL than do subjects without such a prescription.
+  - How should we interpret the confidence interval?
+
+## Interpreting the Result Properly
+
+- In our sample, subjects *with* a statin prescription have 5% higher LDL, on average, than do subjects *without*. 
+- When we generalize beyond these 464 subjects with diabetes to the population they were **selected at random** from, then our data are **compatible** (at the 90% confidence level) with population LDL values for statin users that are between 98% and 113% as large as non-statin users, depending on the **assumptions of our linear model** being correct after our log transformation of the outcome.
+
+## Independent Samples Strategy (1)
+
+Suppose we want to estimate an uncertainty interval for the difference in means across two groups. To begin, plot the data from each sample.
+
+- If the sample data in each group are well described as "Normal", then use the OLS / pooled t procedure to obtain a confidence interval, or a Bayesian model to obtain a credible interval.
+    - If the sample sizes are not the same, and the sample variances aren't close to each other, consider using a Welch t procedure.
+
+## Independent Samples Strategy (2)
+
+- If either sample's data are "symmetric but with outliers", then consider using the bootstrap to obtain a confidence interval, although an OLS or Bayesian result may also be reasonable.
+- If either sample's data are best described as "substantially skewed", then consider whether you actually want to summarize with the difference in means, and consider whether a transformation might be helpful.
 
 ## Session Information
 
