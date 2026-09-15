@@ -1,0 +1,468 @@
+---
+title: "431 Class 09"
+author: Thomas E. Love, Ph.D.
+date: "2026-09-22"
+format:
+  revealjs: 
+    theme: dracula
+    embed-resources: true
+    self-contained: true
+    slide-number: true
+    footnotes-hover: true
+    preview-links: auto
+    date-format: iso
+    footer: "431 Class 09 | 2026-09-22 | <https://thomaselove.github.io/431-2026/>"
+---
+
+## Today's Agenda
+
+- New Data on European Family Care Givers
+- Comparing Working Hours by Education Level
+  - One-Way Analysis of Variance
+  - Considering an Outcome Transformation in ANOVA
+- Correlation and Regression to study burden
+  - Fitting a linear model with `lm()`
+  - Checking its performance and fit
+- Favorite Movies: Session 2
+
+## Load packages and set theme
+
+```{r}
+#| echo: true
+#| message: false
+
+knitr::opts_chunk$set(comment = NA)
+
+source("c09/data/Love-431.R") # for the lovedist() function
+
+library(janitor)
+library(patchwork)
+library(DescTools)  ## post-hoc Bonferroni or Tukey HSD
+library(naniar)     ## dealing with missing data
+library(car)        ## for Box-Cox    
+library(easystats)
+library(tidyverse)
+
+theme_set(theme_lucid()) 
+```
+
+## Get the data
+
+[EUROFAMCARE project](https://www.uke.de/extern/eurofamcare/): a survey on the situation of family carers of older people in Europe.
+
+```{r}
+#| echo: true
+ecare_raw <- read_csv("c09/data/eurocare.csv", show_col_types = FALSE) |>
+  janitor::clean_names() |>
+  mutate(across(where(is.character), as_factor)) |>
+  mutate(subject = as.character(subject)) |>
+  select(subject, hours, c_educ = c_education, neg_impact, pos_impact)
+
+dim(ecare_raw)
+head(ecare_raw, 3)
+```
+
+## Variable Descriptions
+
+Variable | Description
+---------- | :------------------------------------------
+`subject` | carer (care giver) associated with this family
+`hours` | weekly hours carer spends caring for elder
+`c_educ` | carer education level (High, Medium, Low)
+`neg_impact` | COPE Index: carer's burden: negative impact
+`pos_impact` | COPE Index: carer's burden: positive impact
+
+More on these burden scores later.
+
+## Missingness Assessment
+
+```{r}
+#| echo: true
+
+miss_var_summary(ecare_raw)
+miss_case_table(ecare_raw)
+```
+
+## Eliminating Missing Values
+
+Today, we'll filter to complete cases across the whole data set.
+
+```{r}
+#| echo: true
+
+ecare <- ecare_raw |> drop_na()
+summary(ecare)
+```
+
+Complete case analyses can create problems, but for today, we'll ignore them.
+
+## `c_educ` is a factor
+
+```{r}
+#| echo: true
+ecare |> tabyl(c_educ)
+```
+
+Put this factor into a more sensible order with `fct_relevel()`
+
+```{r}
+#| echo: true
+ecare <- ecare |> 
+  mutate(c_educ = 
+           fct_relevel(c_educ, "High", "Middle", "Low"))
+```
+
+## Automated Codebook
+
+We don't need to see the subjects list.
+
+```{r}
+#| echo: true
+data_codebook(ecare |> select(!subject))
+```
+
+## How do mean `hours` vary by `c_educ`?
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+ggplot(ecare, aes(y = hours, x = c_educ)) +
+  geom_violin(aes(fill = c_educ)) + 
+  geom_boxplot(width = 0.2) +
+  stat_summary(fun = mean, geom = "point", 
+               shape = 16, size = 3, col = "red") +
+  scale_fill_viridis_d(alpha = 0.3) +
+  guides(fill = "none")
+```
+
+## How do `hours` vary by `c_educ`? (1/2)
+
+```{r}
+#| echo: true
+
+ecare |> group_by(c_educ) |> reframe(lovedist(hours))
+```
+
+- Sample mean `hours` are somewhat smaller for carers with higher levels of education. 
+  - Does these mean differences seem meaningful?
+  - Does each group's data follow a Normal distribution?
+
+## Do `hours` vary by `c_educ`? (2/2)
+
+```{r}
+#| echo: true
+
+ecare |> group_by(c_educ) |> reframe(lovedist(hours))
+```
+
+- What else might we consider here?
+  - Do we have a balanced design?
+  - Are sample variances very different from each other?
+
+## ANOVA model for this comparison
+
+```{r}
+#| echo: true
+
+fit1 <- lm(hours ~ c_educ, data = ecare)
+anova(fit1)
+model_parameters(fit1, ci = 0.95)
+```
+
+## Plot means with Bonferroni 95% CIs
+
+- Tukey is less appealing in light of unbalanced design.
+
+```{r}
+#| echo: true
+
+par(mar=c(3,10,3,3), las = 1)
+plot(PostHocTest(aov(fit1), method = "bonferroni", conf.level = 0.95))
+```
+
+## Does model `fit1` work well?
+
+```{r}
+#| echo: true
+
+plot(fit1, which = 2)
+```
+
+## Could we transform the outcome?
+
+```{r}
+#| echo: true
+
+boxCox(fit1)
+```
+
+## Impact of log transformation
+
+```{r}
+#| echo: true
+
+ecare |> group_by(c_educ) |> reframe(lovedist(log(hours)))
+```
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+ggplot(ecare, aes(y = log(hours), x = c_educ)) +
+  geom_violin(aes(fill = c_educ)) + 
+  geom_boxplot(width = 0.2) +
+  stat_summary(fun = mean, geom = "point", 
+               shape = 16, size = 3, col = "red") +
+  scale_fill_viridis_d(alpha = 0.3) +
+  guides(fill = "none")
+```
+
+## ANOVA after Transforming `hours`
+
+```{r}
+#| echo: true
+
+fit2 <- lm(log(hours) ~ c_educ, data = ecare)
+
+anova(fit2)
+```
+
+- What's the conclusion here?
+
+## Bonferroni 95% CIs for log(hours)
+
+```{r}
+#| echo: true
+
+PostHocTest(aov(fit2), method = "bonferroni", conf.level = 0.95)
+```
+
+- Variable predicted is actually **log(hours)**
+
+## Bonferroni 95% CIs for log(hours)
+
+```{r}
+#| echo: true
+
+par(mar=c(3,10,3,3), las = 1)
+plot(PostHocTest(aov(fit2), method = "bonferroni", conf.level = 0.95))
+```
+
+## Normality still a problem?
+
+```{r}
+#| echo: true
+
+plot(fit2, which = 2)
+```
+
+## Kruskal-Wallis ANOVA
+
+If the data were severely skewed, you might try:
+
+```{r}
+#| echo: true
+
+kruskal.test(hours ~ c_educ, data = ecare)
+```
+
+- $H_0$: The four education groups have the same center to their `hours` distributions.
+- $H_A$: At least one group has a shifted distribution, with a different center to its `hours`.
+
+## K Samples: Comparing Means (1)
+
+1. What is the outcome under study?
+2. What are the ($K \geq 2$) treatment/exposure groups?
+3. Were the data in fact collected using independent samples?
+4. Are the data random samples from the population(s) of interest? Or is there at least a reasonable argument for generalizing from the samples to the population(s)?
+5. What confidence level do we require?
+
+## K Samples: Comparing Means (2)
+
+6. Are we doing one-sided or two-sided testing? (usually 2-sided)
+7. What does the distribution of each individual sample tell us about which inferential procedure to use?
+8. Are there meaningful differences between population means?
+9. Can we identify pairwise comparisons of means that show meaningful differences using an appropriate procedure that protects against Type I error expansion due to multiple comparisons?
+
+# Standing Break, and then we'll discuss linear regression
+
+## Association of Two Quantities
+
+How well can we predict a carer’s negative impact score on the basis of their positive impact score?
+
+- The two scales are described further on the next slide.
+
+```{r}
+#| echo: true
+
+ecare |> reframe(lovedist(neg_impact)) 
+ecare |> reframe(lovedist(pos_impact)) 
+```
+
+
+## Caregiver Burden Subscales
+
+- `neg_impact` is higher for carers characterized by avoiding problems, focusing on negative emotions, or engaging in unhealthy behaviors, which are linked to increased psychological distress and other adverse effects.
+  - scores in our data range from 7 to 28
+
+- `pos_impact` is higher for carers characterized by adaptive coping strategies focused on finding positive meaning and growth or positive outcomes in stressful situations. 
+  - scores in our data range from 5 to 16
+
+## Histograms of burden scales
+
+```{r}
+plot1 <- ggplot(ecare, aes(x = neg_impact)) +
+       geom_histogram(binwidth = 1, fill = "blue", col = "white") + 
+       labs(title = "Negative Impact")
+
+plot2 <- ggplot(ecare, aes(x = pos_impact)) +
+       geom_histogram(binwidth = 1, fill = "forestgreen", col = "white") + 
+       labs(title = "Positive Impact")
+
+plot1 + plot2
+```
+
+## Scatterplot of 818 Carers
+
+- We’ll plot each point with alpha = 0.3 so that if we have multiple overlapping points, the plot will look darker there.
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+ggplot(ecare, aes(x = pos_impact, y = neg_impact)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "loess", 
+              formula = y ~ x, se = FALSE, col = "blue") +
+  geom_smooth(method = "lm", 
+              formula = y ~ x, se = TRUE, col = "red") +
+  labs(title = "EUROFAMCARE data for 818 subjects",
+       x = "Positive Impact Score", 
+       y = "Negative Impact Score",
+       caption = "Linear model in red, loess smooth in blue")
+```
+
+## Jittered Scatterplot
+
+```{r}
+#| echo: false
+
+ggplot(ecare, aes(x = pos_impact, y = neg_impact)) +
+  geom_jitter() +
+  geom_smooth(method = "loess", 
+              formula = y ~ x, se = FALSE, col = "blue") +
+  geom_smooth(method = "lm", 
+              formula = y ~ x, se = TRUE, col = "red") +
+  labs(title = "EUROFAMCARE data for 818 subjects",
+       x = "Positive Impact Score", 
+       y = "Negative Impact Score",
+       caption = "Linear model in red, loess smooth in blue")
+```
+
+## Pearson Correlation Coefficent
+
+- Pearson r ranges from -1 (perfect inverse relationship: as x goes up, y goes down) to +1 (perfect direct relationship: as x goes up, y goes up.)
+- Pearson r measures only a *linear* association.
+
+```{r}
+#| echo: true
+
+ecare |> select(neg_impact, pos_impact) |> correlation()
+```
+
+## Considering the Correlation
+
+```{r}
+#| echo: true
+
+ecare |> select(neg_impact, pos_impact) |> correlation()
+```
+
+- Is the direction of this correlation surprising?
+- How about its magnitude?
+
+## Fit a linear model with OLS
+
+Ordinary Least Squares used to fit a linear model...
+
+```{r}
+#| echo: true
+
+fit3 <- lm(neg_impact ~ pos_impact, data = ecare)
+model_parameters(fit3, ci = 0.97, pretty_names = FALSE)
+```
+
+Note that we're creating **97%** confidence intervals here.
+
+## Interpreting the intercept
+
+```{r}
+#| echo: true
+
+model_parameters(fit3, ci = 0.97, pretty_names = FALSE)
+```
+
+- Our `fit3` model estimates the `neg_impact` value to be 20.69 if `pos_impact` = 0.
+- All of our `pos_impact` values are between 5 and 16, so we don't have any useful information about what happens when `pos_impact` = 0, and thus the intercept isn't actually useful.
+
+## Interpret slope estimate
+
+```{r}
+#| echo: true
+
+model_parameters(fit3, ci = 0.97, pretty_names = FALSE)
+```
+
+- Suppose Harry's `pos_impact` is one point larger than Sally's. Our `fit3` model predicts the `neg_impact` for Harry to be 0.71 points less than that of Sally, on average.
+- Of course, this assumes Harry and Sally are similar to the subjects in `ecare` and that our linear model `fit3` is correct.
+
+## Interpret slope's 97% CI
+
+```{r}
+#| echo: true
+
+model_parameters(fit3, ci = 0.97, pretty_names = FALSE)
+```
+
+- When we generalize beyond these 818 study participants to the population they were selected at random from, then our data are compatible (at the 97% confidence level) with population slopes between -0.83 and -0.59, depending on the assumptions of our model `fit3` being correct.
+
+## Performance of this model?
+
+```{r}
+#| echo: true
+
+model_performance(fit3)
+```
+
+- $R^2$ tells us model `fit3` accounts for 16.9% of the variation in `neg_impact` we see in these 818 subjects.
+- $R^2$ = 0.169 is the square of the Pearson correlation (-0.41) of `neg_impact` and `pos_impact`. 
+- $\eta^2$ in ANOVA = this $R^2$.
+
+::: aside
+
+Adjusted $R^2$ will be useful when we have multiple predictors.
+
+:::
+
+## Performance of this model?
+
+```{r}
+#| echo: true
+
+model_performance(fit3)
+```
+
+The model `fit3` assumes that our errors (residuals) come from a Normal distribution with mean 0 and standard deviation `Sigma` ($\sigma) = 3.546.
+
+- About 68% of our predicted `neg_impact` values should be within $\pm 3.546$ points of the correct value, and 95% should be within $\pm 2(3.546)$, or $\pm 7.092$ points. 
+
+# Favorite Movies Data
+
+## Session Information
+
+```{r}
+#| echo: true
+
+xfun::session_info()
+```
