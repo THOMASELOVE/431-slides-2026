@@ -1,0 +1,535 @@
+---
+title: "431 Class 10"
+author: Thomas E. Love, Ph.D.
+date: "2026-09-24"
+format:
+  revealjs: 
+    theme: dracula
+    embed-resources: true
+    self-contained: true
+    slide-number: true
+    footnotes-hover: true
+    preview-links: auto
+    date-format: iso
+    footer: "431 Class 10 | 2026-09-24 | <https://thomaselove.github.io/431-2026/>"
+---
+
+
+## Today's Agenda
+
+- To come.
+
+## Today's Setup
+
+```{r}
+#| echo: true
+#| message: false
+
+library(janitor)
+library(naniar)     ## dealing with missing data
+library(car)        ## for the Box-Cox plot     
+library(patchwork)
+library(rstanarm)
+library(easystats)
+library(tidyverse)
+
+theme_set(theme_light()) ## new theme for ggplots!
+knitr::opts_chunk$set(comment = NA)
+
+source("c10/data/Love-431.R") # for the lovedist() function
+```
+
+## Data Ingest and Cleaning
+
+[EUROFAMCARE](https://www.uke.de/extern/eurofamcare/) data introduced in Class 09.
+
+- Our data describe 902 primary caregivers providing at least four hours of personal care or support per week to an elder aged 65 years or older.
+
+```{r}
+#| echo: true
+
+eurocare <- read_csv("c10/data/eurocare.csv", show_col_types = FALSE) |>
+  janitor::clean_names() |>
+  mutate(subject = as.character(subject)) |>
+  select(subject, e_age, barthel, neg_impact, pos_impact)
+
+dim(eurocare)
+```
+
+## `eurocare` variables
+
+Variable | Description
+-------- | -----------------------------------------------------
+`subject` | Identifying code
+`e_age` | Age of elder (years)
+`barthel` | [Barthel index](https://en.wikipedia.org/wiki/Barthel_scale) for elder's Activities of Daily Living (0 to 100 = complete independence)
+`neg_impact` | COPE Index Negative Impact subscale
+`pos_impact` | COPE Index Positive Impact subscale
+
+## Missingness Reports
+
+```{r}
+#| echo: true
+
+miss_case_table(eurocare) # missingness by subject
+
+miss_var_summary(eurocare) # missingness by variable
+```
+
+## Filter to complete cases
+
+- Drop missing values across all variables in `eurocare`.
+
+```{r}
+#| echo: true
+ecare <- eurocare |> drop_na()
+ecare
+```
+
+## Automated codebook
+
+```{r}
+#| echo: true
+
+data_codebook(ecare |> select(-subject))
+```
+
+## Model we fit last time
+
+```{r}
+#| echo: true
+
+fit3 <- lm(neg_impact ~ pos_impact, data = ecare)
+model_parameters(fit3, ci = 0.97, pretty_names = FALSE)
+model_performance(fit3)
+```
+
+## Checking OLS Model Fit
+
+Main assumptions of any simple linear regression are:
+
+1. **linearity**: we assume that the outcome is linearly related to our predictor 
+2. **constant variance** (homoscedasticity): we assume that the variation of our outcome is about the same regardless of the value of our predictor
+3. **normal distribution**: we assume that the errors around the regression model at any specified values of the x-variables follow an approximately Normal distribution.
+
+## Fitting the diagnostic plots
+
+To check these assumptions, consider the following plots.
+
+```{r}
+#| echo: true
+#| message: true
+
+fit3_diagnostic_plots <- 
+  plot(check_model(fit3, panel = FALSE, detrend = FALSE))
+```
+
+- I don't worry about confidence bands in these plots.
+
+## Checking Linearity
+
+```{r}
+#| echo: true
+
+fit3_diagnostic_plots[[2]]
+```
+
+## Checking Equal Variances
+
+```{r}
+#| echo: true
+
+fit3_diagnostic_plots[[3]]
+```
+
+## Checking for Influential Points
+
+```{r}
+#| echo: true
+
+fit3_diagnostic_plots[[4]]
+```
+
+## Checking Normality
+
+```{r}
+#| echo: true
+
+fit3_diagnostic_plots[[5]]
+```
+
+## Alternative: Normal Q-Q
+
+```{r}
+#| echo: true
+
+plot(fit3, which = 2)
+```
+
+## Posterior Predictive Checks
+
+```{r}
+#| echo: true
+
+fit3_diagnostic_plots[[1]]
+```
+
+## Box-Cox suggestion?
+
+```{r}
+#| echo: true
+boxCox(fit3)
+```
+
+## Transformation to Scatterplot
+
+```{r}
+#| echo: true
+
+ggplot(ecare, aes(x = pos_impact, y = (1/sqrt(neg_impact)))) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE, col = "red", formula = y ~ x)
+```
+
+## What would a transformed model look like?
+
+```{r}
+#| echo: true
+
+ecare <- ecare |> mutate(neg_tr = 1/sqrt(neg_impact))
+
+fit4 <- lm(neg_tr ~ pos_impact, data = ecare)
+
+fit4_diagnostic_plots <- 
+  plot(check_model(fit4, panel = FALSE, detrend = FALSE))
+```
+
+## Posterior Predictive Check?
+
+```{r}
+#| echo: true
+
+fit4_diagnostic_plots[[1]]
+```
+
+## Normality of Residuals?
+
+```{r}
+#| echo: true
+
+fit4_diagnostic_plots[[5]]
+```
+
+
+## Interpreting the transformed model
+
+```{r}
+#| echo: true
+
+model_parameters(fit4, ci = 0.97)
+
+model_performance(fit4)
+```
+
+# Standing Break
+
+## A new question
+
+How well can we predict an elder's `barthel` index (0 = complete dependence for activities daily living to 100 = complete independence) on the basis of their age (stored in `e_age`)?
+
+```{r}
+#| echo: true
+ecare |> reframe(lovedist(barthel)) 
+ecare |> reframe(lovedist(e_age))
+```
+
+## Histograms?
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+p1 <- ggplot(ecare, aes(x = barthel)) +
+       geom_histogram(binwidth = 1, fill = "blue", col = "white") + 
+       labs(title = "Barthel Index")
+
+p2 <- ggplot(ecare, aes(x = e_age)) +
+       geom_histogram(binwidth = 1, fill = "forestgreen", col = "white") + 
+       labs(title = "Age of elder")
+
+p1 + p2
+```
+
+## Scatterplot of 847 elders
+
+We'll look at `barthel` index (on the y axis) vs. `e_age` (on x). We'll plot each point with `alpha = 0.3` so that if we have multiple overlapping points, the plot will look darker there.
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+ggplot(ecare, aes(x = e_age, y = barthel)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "loess", 
+              formula = y ~ x, se = FALSE, col = "blue") +
+  geom_smooth(method = "lm", 
+              formula = y ~ x, se = TRUE, col = "red") +
+  labs(title = "EUROFAMCARE data for 847 subjects",
+       x = "Age (years)", y = "Barthel Index for ADL",
+       caption = "Linear model in red, loess smooth in blue")
+```
+
+## Jittered Scatterplot?
+
+Let's add a little random noise to each point on each scale to deal with the problem of overlapping points. We use `geom_jitter()` here rather than `geom_point()`.
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+ggplot(ecare, aes(x = e_age, y = barthel)) +
+  geom_jitter() +
+  geom_smooth(method = "loess", 
+              formula = y ~ x, se = FALSE, col = "blue") +
+  geom_smooth(method = "lm", 
+              formula = y ~ x, se = TRUE, col = "red") +
+  labs(title = "Jittered EUROFAMCARE data for 847 subjects", 
+       x = "Age (years)", y = "Barthel Index for ADL",
+       caption = "Linear model in red, loess smooth in blue")
+```
+
+## Pearson Correlation Coefficient
+
+- Pearson $r$ ranges from -1 (perfect inverse relationship: as x goes up, y goes down) to +1 (perfect direct relationship: as x goes up, y goes up.)
+- Pearson $r$ measures only a *linear* association.
+
+```{r}
+#| echo: true
+
+ecare |> select(barthel, e_age) |> correlation()
+```
+
+## OLS: Predict `barthel` with `e_age`
+
+```{r}
+#| echo: true
+
+fit5 <- lm(barthel ~ e_age, data = ecare)
+model_parameters(fit5, ci = 0.89)
+```
+
+- Note that our variable `e_age` has been "prettified" here to `e age` which might be confusing...
+
+```{r}
+#| echo: true
+model_parameters(fit5, ci = 0.89, pretty_names = FALSE)
+```
+
+What does this output tell us?
+
+## Interpreting the Intercept
+
+```{r}
+#| echo: true
+model_parameters(fit5, ci = 0.89, pretty_names = FALSE)
+```
+
+- Our fit5 model estimates the `barthel` value of to be 109.01 if `e_age` = 0, but we have no values of `e_age` anywhere near 0 in our data, nor is such a value plausible clinically for either `e_age` (our values range from 65 to 103) or `barthel` (which must be between 0 and 100), so the intercept doesn’t tell us much here.
+
+## Point Estimate of the Slope
+
+```{r}
+#| echo: true
+model_parameters(fit5, ci = 0.89, pretty_names = FALSE)
+```
+
+- Suppose Harry is one year older than Sally. Our `fit5` model predicts the `barthel` index for Harry to be 0.55 points *less* than that of Sally, on average.
+- Of course, this assumes Harry and Sally are similar to the subjects in `e_care` and that our linear model `fit5` is correct.
+
+## Confidence Interval for Slope
+
+```{r}
+#| echo: true
+model_parameters(fit5, ci = 0.89, pretty_names = FALSE)
+```
+
+- When we generalize beyond study participants to the population they were selected at random from, then our data are compatible (at the 89% confidence level) with population slopes between -0.75 and -0.36, depending on the assumptions of our linear model `fit5` being correct.
+
+## Performance of our OLS model?
+
+```{r}
+#| echo: true
+
+model_performance(fit5)
+```
+
+- Key summaries for an OLS model with one predictor, like `fit5`, are $R^2$ and Sigma (which is similar to RMSE.)
+- $R^2$ tells us model `fit5` accounts for 2.4% of the variation in `barthel` that we observe in our `ecare` data.
+
+## Using the estimated `Sigma` ($\sigma$)
+
+```{r}
+#| echo: true
+
+model_performance(fit5)
+```
+
+- Our model `fit5` assumes that our errors (residuals) come from a Normal distribution with mean 0 and standard deviation Sigma ($\sigma$) = 28.8. 
+- Thus, about 68% of our predictions should be within $\pm$ 28.8 points of the correct `barthel` index, and 95% of our predictions should be within $\pm 2 \times 28.8$, or 57.6 points on the `barthel` score. Is this good news?
+
+## Performance Measures (1/5)
+
+- `AIC`: Akaike’s Information Criterion
+- `AICc`: Second-order (or small sample) AIC with a correction for small sample sizes
+- `BIC`: Bayesian Information Criterion
+
+AIC, AICc and BIC are used when comparing one or more models for the same outcome. When comparing models fit using maximum likelihood (like OLS linear models), the smaller the AIC or BIC, the better the fit.
+
+## Performance Measures (2/5)
+
+`R2`: r-squared value = 0.024
+
+- The R-squared ($R^2$) measure for an OLS fit describes how much of the variation in our outcome can be explained using our model (and its predictors.) $R^2$ falls between 0 and 1, and the closer it is to 1, the better the model fits our data. 
+- In a simple (one-predictor) OLS model like this, the value is also the square of the Pearson correlation coefficient, $r$. 
+- We called this $R^2$ "eta-squared" ($\eta^2$) in ANOVA.
+
+## Performance Measures (3/5)
+
+`R2 (adj.)`: adjusted r-squared value = 0.023
+
+- Adjusted R-squared is an index (so it’s not a proportion of anything) for comparing different models (different predictor sets) for the same outcome.
+- The idea is to reduce the temptation to overfit the data, by penalizing the $R^2$ value a little for each predictor. 
+- Adjusted $R^2$ is usually between 0 and 1, but can be negative.
+- The adjusted $R^2$ measure can never be larger than $R^2$.
+
+## Performance Measures (4/5)
+
+`RMSE` = 28.742
+
+- The RMSE is the square root of the variance of the residuals and summarizes the difference between the observed data and the model’s predicted values.
+- It can be interpreted as the standard deviation of the unexplained variance, and has the same units as the outcome. 
+- When comparing models using the same data for the same outcome (but, for instance, with different predictor sets), lower RMSE values indicate better model fit. 
+
+## Performance Measures (5/5)
+
+`Sigma` = 28.776
+
+- Linear models assume that their residuals are drawn from a Normal distribution with mean 0 and standard deviation equal to sigma ($\sigma$). 
+- This indicates that the predicted outcome will be within $\pm 1 \sigma$ units of the observed outcome for approximately 68% of the data points, for example. 
+
+## Checking OLS Model Fit
+
+Main assumptions of any simple linear regression are:
+
+1. **linearity**: we assume that the outcome is linearly related to our predictor 
+2. **constant variance** (homoscedasticity): we assume that the variation of our outcome is about the same regardless of the value of our predictor
+3. **normal distribution**: we assume that the errors around the regression model at any specified values of the x-variables follow an approximately Normal distribution.
+
+## Fitting the diagnostic plots
+
+To check these assumptions, consider the following plots.
+
+```{r}
+#| echo: true
+#| message: true
+
+fit5_diagnostic_plots <- 
+  plot(check_model(fit5, panel = FALSE, detrend = FALSE))
+```
+
+- I don't worry about confidence bands in these plots.
+
+## Checking Linearity
+
+```{r}
+#| echo: true
+
+fit5_diagnostic_plots[[2]]
+```
+
+## Checking Equal Variances
+
+```{r}
+#| echo: true
+
+fit5_diagnostic_plots[[3]]
+```
+
+## Checking for Influential Points
+
+```{r}
+#| echo: true
+
+fit5_diagnostic_plots[[4]]
+```
+
+## Which points are listed in the plot?
+
+None are anywhere near the contours, as it turns out.
+
+```{r}
+#| echo: true
+ecare |> slice(c(4, 38, 160, 470)) |> select(subject, barthel, e_age)
+```
+
+## Checking Normality
+
+```{r}
+#| echo: true
+
+fit5_diagnostic_plots[[5]]
+```
+
+## Alternative: Normal Q-Q
+
+```{r}
+#| echo: true
+
+plot(fit5, which = 2)
+```
+
+## Which points are low outliers?
+
+```{r}
+#| echo: true
+ecare |> slice(c(4, 47, 160)) |> select(subject, barthel, e_age)
+```
+
+## Posterior Predictive Checks
+
+```{r}
+#| echo: true
+
+fit5_diagnostic_plots[[1]]
+```
+
+## Box-Cox suggestion?
+
+To use Box-Cox, all values of our outcome `barthel` would have to be strictly positive. 
+
+```{r}
+#| echo: true
+
+ecare |> reframe(lovedist(barthel)) 
+```
+
+```{r}
+#| echo: true
+#| output-location: slide
+fit5_adj <- lm((barthel+1) ~ e_age, data = ecare)
+
+boxCox(fit5_adj)
+```
+
+## Next Time
+
+What's wrong with statistical significance?
+
+## Session Information
+
+```{r}
+#| echo: true
+
+xfun::session_info()
+```
+
