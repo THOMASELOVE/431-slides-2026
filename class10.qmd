@@ -17,7 +17,14 @@ format:
 
 ## Today's Agenda
 
-- To come.
+- Checking the fit of a linear model to assumptions
+  - linearity
+  - constant variance (homoscedasticity)
+  - Normality of residuals
+    - assessing influence and leverage
+  - posterior predictive checks
+- The impact of a transformation
+- Model performance measures besides $R^2$ and $\sigma$
 
 ## Today's Setup
 
