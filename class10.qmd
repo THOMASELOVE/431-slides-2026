@@ -32,6 +32,10 @@ format:
 #| echo: true
 #| message: false
 
+knitr::opts_chunk$set(comment = NA)
+
+source("c10/data/Love-431.R") # for the lovedist() function
+
 library(janitor)
 library(naniar)     ## dealing with missing data
 library(car)        ## for the Box-Cox plot     
@@ -41,9 +45,6 @@ library(easystats)
 library(tidyverse)
 
 theme_set(theme_light()) ## new theme for ggplots!
-knitr::opts_chunk$set(comment = NA)
-
-source("c10/data/Love-431.R") # for the lovedist() function
 ```
 
 ## Data Ingest and Cleaning
