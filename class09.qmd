@@ -23,7 +23,7 @@ format:
 - Correlation and Regression to study burden
   - Fitting a linear model with `lm()`
   - Checking its performance and fit
-- Favorite Movies: Session 2
+- **1:45 PM**: Favorite Movies: Session 2
 
 ## Load packages and set theme
 
@@ -285,7 +285,7 @@ kruskal.test(hours ~ c_educ, data = ecare)
 8. Are there meaningful differences between population means?
 9. Can we identify pairwise comparisons of means that show meaningful differences using an appropriate procedure that protects against Type I error expansion due to multiple comparisons?
 
-# Standing Break, and then we'll discuss linear regression
+# On to Linear Regression
 
 ## Association of Two Quantities
 
@@ -466,3 +466,5 @@ The model `fit3` assumes that our errors (residuals) come from a Normal distribu
 
 xfun::session_info()
 ```
+
+
