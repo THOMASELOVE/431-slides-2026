@@ -296,7 +296,7 @@ We are interested in understanding what the data tell us about:
 
 Which of these uses *independent* samples, and which *paired* samples?
 
-# Comparing Proportions using Independent Samples
+# Standing Break
 
 ## Visual Abstract: NICU Sequencing
 

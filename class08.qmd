@@ -406,7 +406,7 @@ ggplot(ohio_8, aes(x = hfactor, y = low_bwt)) +
 ohio_8 |> group_by(hfactor) |> reframe(lovedist(low_bwt))
 ```
 
-## ANOVA table for smoking
+## ANOVA table: low birth weight
 
 ```{r}
 #| echo: true

@@ -322,6 +322,8 @@ ASA Statement: "Informally, a p-value is the probability under a specified stati
 
 ![](c11/images/hernan1.png)
 
+# Standing Break
+
 ## Unfortunately...
 
 There are a lot of candidates for the most outrageous misuse of "statistical significance" out there.
