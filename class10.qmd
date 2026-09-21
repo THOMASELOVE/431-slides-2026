@@ -38,7 +38,8 @@ source("c10/data/Love-431.R") # for the lovedist() function
 
 library(janitor)
 library(naniar)     ## dealing with missing data
-library(car)        ## for the Box-Cox plot     
+library(car)        ## for the Box-Cox plot 
+library(ggExtra)    ## NEW! add margins to scatterplot
 library(patchwork)
 library(rstanarm)
 library(easystats)
@@ -101,6 +102,30 @@ ecare
 
 data_codebook(ecare |> select(-subject))
 ```
+
+## Negative vs. Positive Impact
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+plot1 <- ggplot(ecare, aes(x = pos_impact, y = neg_impact)) +
+  geom_jitter() +
+  geom_smooth(method = "lm", col = "red", formula = y ~ x, se = TRUE) +
+  geom_smooth(method = "loess", col = "blue", formula = y ~ x, se = FALSE) +
+  labs(x = "Positive Impact", y = "Negative Impact")
+
+plot1
+```
+
+## Add margins to scatterplot
+
+```{r}
+#| echo: true
+ggMarginal(plot1, type = "histogram")
+```
+
+
 
 ## Model we fit last time
 
@@ -194,9 +219,18 @@ boxCox(fit3)
 ```{r}
 #| echo: true
 
-ggplot(ecare, aes(x = pos_impact, y = (1/sqrt(neg_impact)))) +
+plot2 <- ggplot(ecare, aes(x = pos_impact, y = (1/sqrt(neg_impact)))) +
   geom_point() +
   geom_smooth(method = "lm", se = TRUE, col = "red", formula = y ~ x)
+
+plot2
+```
+
+## Add margins to scatterplot
+
+```{r}
+#| echo: true
+ggMarginal(plot2, fill = "purple", type = "boxplot")
 ```
 
 ## What would a transformed model look like?
