@@ -1,7 +1,7 @@
 ---
 title: "431 Class 11"
 author: Thomas E. Love, Ph.D.
-date: "2026-09-30"
+date: "2026-09-29"
 format:
   revealjs: 
     theme: dracula
@@ -11,7 +11,7 @@ format:
     footnotes-hover: true
     preview-links: auto
     date-format: iso
-    footer: "431 Class 11 | 2026-09-30 | <https://thomaselove.github.io/431-2026/>"
+    footer: "431 Class 11 | 2026-09-29 | <https://thomaselove.github.io/431-2026/>"
 ---
 
 ## Today's Agenda
@@ -135,18 +135,124 @@ Bottom line:  **Reject rules.  Ideas matter.**
 
 ![](c11/images/bear.png)
 
+## Gerd Gigerenzer "The Null Ritual"
+
+Gigerenzer describes how a rigid hybrid model merged elements of Ronald Fisher and Jerzy Neyman's distinct statistical approaches into a standardized procedure. 
+
+Researchers mechanically follow three steps without applying judgment:
+
+1. State a null hypothesis ($H_0$) of zero effect.
+2. Adopt a sacred 5% significance level (p < 0.05) to reject the null hypothesis.
+3. Always perform this exact procedure and treat significance as proof of the experimental hypothesis.
+
+## Widespread Delusions
+
+Instead of treating statistics as a tool for evaluating evidence, Gigerenzer argues that the strange idea of statistical significance has turned into an unthinking administrative hurdle that contributes to the replication crisis.
+
+Gigerenzer's research shows that many academics and students harbor fundamental misconceptions about what a p-value actually means. He highlights three major psychological fallacies (see next slide.)
+
+## Widespread Delusions
+
+1. *The Replication Delusion*: The false belief that 1 - p represents the exact probability of a successful replication, which mistakenly makes future replication studies look unnecessary.
+2. *The Illusion of Certainty*: The mistaken belief that a significant p-value completely disproves the null hypothesis.
+3. *Bayesian Wishful Thinking*: The incorrect assumption that the p-value tells you the probability that the hypothesis is true or false.
+
+## Gigerenzer (2004) [Mindless Statistics](https://www.sciencedirect.com/science/article/abs/pii/S1053535704000927)
+
+Participants were presented with a scenario involving a common statistical procedure—a simple t-test comparing two independent groups. They were given the following results:
+
+t = 2.7, df = 18, p = 0.01
+
+They were then asked to evaluate six statements regarding the p-value and mark each as "true" or "false", and the test instructions explicitly stated that "several or none of the statements may be correct."
+
+## Three of Gigerenzer's Statements
+
+Remember: t = 2.7, df = 18, p = 0.01
+
+1. "You have found the probability of getting a significant result if you repeat the experiment." True or False?
+
+2. "You have found the probability of the null hypothesis being true" or "You have proved the alternative hypothesis." True or False?
+
+3. "You know, if you decide to reject the null hypothesis, the probability that you are making the wrong decision." True or False?
+
+## The Replication Delusion
+
+Statement: "You have found the probability of getting a significant result if you repeat the experiment." 
+
+- Participants believed a p = 0.01 meant there was a 99% chance a repeat study would be significant.
+- Reality: The p-value is calculated under the strict assumption that the null hypothesis is true. It cannot calculate the probability of a future successful replication, which depends on the actual statistical power and true effect size of the experiment.
+
+Roughly half of the statistics instructors fell for this claim.
+
+## Bayesian Wishful Thinking
+
+Statement: "You have found the probability of the null hypothesis being true" or "You have proved the alternative hypothesis."
+
+- Reality: A p-value represents Pr(Data | Null Hypothesis). It does not represent the inverse conditional probability: Pr(Null Hypothesis | Data).
+
+This was the most common error among researchers. Over 70% of non-statistics professors and standard students believed the p value gave them the direct probability that the hypothesis itself was true or false.
+
+## The Illusion of Certainty
+
+Statement: "You know, if you decide to reject the null hypothesis, the probability that you are making the wrong decision."
+
+- Reality: The p-value only tells you how unusual your current data is if the null hypothesis is true. It cannot predict the specific error rate of your real-world decision-making process, which requires knowing prior probabilities.
+
+Over 60% of students and nearly 40% of all faculty members got this wrong.
+
+## Gigerenzer's Conclusion
+
+Gigerenzer argued that this data highlights a major systemic problem.
+
+- Because the math behind a p-value is technically simple, the high failure rates are not caused by a lack of intelligence. Instead, he suggests it is caused by an anxious, social ritual.
+- Researchers feel immense pressure to publish significant results (p < 0.05), leading them to treat the p-value as an unthinking magic stamp of truth rather than a tool for logical statistical reasoning.
+
+## Is this better in medicine?
+
+Steven Goodman [A Dirty Dozen: Twelve P-value Misconceptions](https://pubmed.ncbi.nlm.nih.gov/18582619/)
+
+- The P value's inferential meaning is widely and often wildly misconstrued, a fact that has been pointed out innumerable times since at least the 1940s.
+- This commentary reviews a dozen of these common misinterpretations and explains why each is wrong. 
+- It also reviews the possible consequences of these improper understandings or representations of its meaning.
+
+## Goodman key highlights (1)
+
+*Equating a small p-value with a major medical breakthrough.* Clinicians routinely review clinical trial data and assume that a highly significant result (p < 0.001) means a drug has a powerful therapeutic effect.
+
+- A massive multi-center trial with tens of thousands of patients can yield p < 0.001 for a blood pressure medication that only lowers BP by clinically meaningless fraction of a millimeter of mercury. 
+- Conversely, a genuinely life-saving drug tested on a small pool of patients with a rare disease might return a "non-significant" p = 0.08 due to low statistical power.
+
+## Goodman highlights (2)
+
+*Diagnostic test fallacy (Bayesian wishful thinking)*:  A vast majority of surveyed physicians believe that if a clinical trial shows a drug reduces mortality with a p = 0.05, there is only a 5% chance the drug is ineffective (the null hypothesis).
+
+- This is the prosecutor's fallacy applied to medicine. The p-value is the probability of seeing the data given the drug doesn't work. It is not the probability that the drug doesn't work given the data.
+
+## Goodman highlights (3)
+
+Medical researchers frequently commit a logical error that directly harms patients: treating a failure to reject the null hypothesis as proof of safety.
+
+- In trials comparing a new drug to an old drug, if p > 0.05, researchers frequently write in their conclusions that "there was no difference in adverse events between the two groups."
+- As Altman and Bland famously put it: "*Absence of evidence is not evidence of absence.*" 
+- A high p-value simply means the study was not large enough or precise enough to detect a difference.
+
+## Institutional Consequences
+
+Because of these widespread misunderstandings, the medical community heavily incentivizes "p-hacking": covertly manipulating data, dropping outliers, or running dozens of unadjusted subgroup analyses until something drops below 0.05. 
+
+- See Ioannidis's 2005 paper "[Why Most Published Research Findings Are False](https://journals.plos.org/plosmedicine/article?id=10.1371/journal.pmed.0020124)" demonstrating that these very statistical delusions run rampant through medical journals.
+
 # American Statistical Association to the rescue!?!
 
 ## The American Statistical Association
 
 2016
 
-- Ronald L. Wasserstein & Nicole A. Lazar (2016) [The ASA's Statement on p-Values: Context, Process, and Purpose](https://www.tandfonline.com/doi/full/10.1080/00031305.2016.1154108), *The American Statistician*, 70:2, 129-133, DOI: [10.1080/00031305.2016.1154108](https://doi.org/10.1080/00031305.2016.1154108)
-
+- Ronald L. Wasserstein & Nicole A. Lazar (2016) [The ASA's Statement on p-Values: Context, Process, and Purpose](https://www.tandfonline.com/doi/full/10.1080/00031305.2016.1154108), *The American Statistician*, 70:2, 129-133, 
 
 2019
 
-- Ronald L. Wasserstein, Allen L. Schirm & Nicole A. Lazar (2019) [Moving to a World Beyond "p < 0.05"](https://www.tandfonline.com/doi/full/10.1080/00031305.2019.1583913), *The American Statistician*, 73:sup1, 1-19, DOI: [10.1080/00031305.2019.1583913](https://doi.org/10.1080/00031305.2019.1583913). 
+- Ronald L. Wasserstein, Allen L. Schirm & Nicole A. Lazar (2019) [Moving to a World Beyond "p < 0.05"](https://www.tandfonline.com/doi/full/10.1080/00031305.2019.1583913), *The American Statistician*, 73:sup1, 1-19.
 
 ## Statistical Inference in the 21st Century
 
@@ -251,6 +357,8 @@ It's that the whole notion of statistical significance is the problem.
 
 - Working your data to provide a single "yes/no" answer instead of embracing its variation and understanding what the data suggest thoroughly is the problem.
 
+# Standing Break
+
 ## Nuzzo: *Nature* Statistical Errors
 
 ![](c11/images/Probable_Cause.jpg)
@@ -321,8 +429,6 @@ ASA Statement: "Informally, a p-value is the probability under a specified stati
 ---
 
 ![](c11/images/hernan1.png)
-
-# Standing Break
 
 ## Unfortunately...
 
@@ -402,18 +508,6 @@ Gelman blog [2017-09-26](http://andrewgelman.com/2017/09/26/abandon-statistical-
 "Measurement error and variation are concerns even if your estimate is more than 2 standard errors from zero. Indeed, if variation or measurement error are high, then you learn almost nothing from an estimate even if it happens to be 'statistically significant.'"
 
 Read the whole paper [here](http://www.stat.columbia.edu/~gelman/research/unpublished/abandon.pdf)
-
-## JAMA 2018-04-10 
-
-![](c11/images/Ioannidis2018.png)
-
-## Blume et al. PLoS ONE (2018) 13(3): e0188299
-
-![](c11/images/blume.png)
-
-## Second-generation *p* values
-
-![](c11/images/blume2.png)
 
 ## *Nature* P values are just the tip of the iceberg!
 
