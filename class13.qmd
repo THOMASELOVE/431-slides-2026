@@ -14,17 +14,6 @@ format:
     footer: "431 Class 13 | 2026-10-06 | <https://thomaselove.github.io/431-2026/>"
 ---
 
-## Today's Agenda
-
-Contingency Tables (Sections 13-14 in Course Book) 
-
-- Some Reminders about 2 x 2 tables
-- Building a J x K Table
-- Chi-Square Tests of Independence
-    - Cochran Conditions and Checking Assumptions
-
-Favorite Movies
-
 ## Today's Packages
 
 ```{r}
@@ -33,7 +22,9 @@ Favorite Movies
 
 knitr::opts_chunk$set(comment = NA)
 
-source("c13/data/Love-431.R")
+library(here)
+
+source(here("c13/data/Love-431.R"))
 
 library(janitor)
 library(patchwork)
@@ -41,8 +32,46 @@ library(easystats)
 library(tidyverse)
 
 theme_set(theme_bw())
-
 ```
+
+## The **here** package
+
+![](c13/images/here.png)
+
+## The **here** package
+
+<https://here.r-lib.org/>
+
+The **here** package creates paths relative to the top-level directory. The package displays the top-level of the current project on load or any time you call here():
+
+```{r}
+#| echo: true
+
+here()
+```
+
+Why is this helpful?
+
+```{r}
+#| echo: true
+
+source(here("c13/data/Love-431.R"))
+```
+
+## Jenny Bryan's [Ode to the here package](https://github.com/jennybc/here_here)
+
+![](c13/images/here2.png)
+
+## Jenny Bryan on [Project-oriented workflow](https://www.tidyverse.org/blog/2017/12/workflow-vs-script/)
+
+![](c13/images/fire.png)
+
+## R projects and `here()`
+
+1.  Organize each project into a folder on your computer.
+2.  Make sure the top-level folder advertises itself as such. If you use RStudio and/or Git, those both leave characteristic files that do that.
+3.  Use the `here()` function to build the path when you read or write a file, relative to the top-level directory.
+4.  Whenever you work on this project, launch RStudio from the project’s top-level directory.
 
 ## TB Prevalence in IV Drug Users
 
