@@ -232,7 +232,7 @@ In early work, we are searching for treatments of promise, and our initial study
 - We're not so concerned about getting results that cause us to continue to explore a treatment that doesn't actually do what we need it to do.
 - We're really concerned about ruling out a treatment that is promising before we should. 
 
-## Early Work: Power & Sample Size (2)
+## Early Work(2)
 
 This implies we should prioritize reducing Type II error rates (we want more power to detect small but real effects, even if this means we will occasionally identify something as promising when it isn't.)
 
@@ -245,7 +245,7 @@ In late work, we have already identified promising treatments, and we are trying
 - We're very concerned about getting results that cause us to continue to explore a treatment that doesn't actually do what we need it to do.
 - We're less concerned about ruling out a treatment that is promising but doesn't actually work. 
 
-## Late Work: Power & Sample Size (2)
+## Late Work (2)
 
 This implies we should prioritize reducing Type I error rates (we want greater confidence, even at the expense of power, that the effect we claim based on past data holds up.) 
 
@@ -270,9 +270,9 @@ This kind of confirmatory work is usually well suited to studies set up with hig
 
 # Standing Break
 
-# Project A
+# Project A is now due Monday 2026-10-26 at 9 AM
 
-## Project A due 2026-10-21 at noon
+## Project A due 2026-10-26 at 9 AM
 
 1. Your project A master data set (with missing values), saved as an .Rds file.
 2. A detailed report, written in Quarto and rendered in HTML (17 sections), which describes all of your work and follows [the Quarto template provided](https://raw.githubusercontent.com/THOMASELOVE/431-data/refs/heads/main/data/project_A/431-projA-template-2026.qmd).
