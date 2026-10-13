@@ -1,0 +1,964 @@
+---
+title: "431 Class 16"
+author: Thomas E. Love, Ph.D.
+date: "2026-10-15"
+format:
+  revealjs: 
+    theme: dracula
+    embed-resources: true
+    self-contained: true
+    slide-number: true
+    footnotes-hover: true
+    preview-links: auto
+    date-format: iso
+    footer: "431 Class 16 | 2026-10-15 | <https://thomaselove.github.io/431-2026/>"
+---
+
+## Today's Agenda
+
+- Ingesting / Managing some Favorite Movies Data
+- Comparing two groups on a **transformed** outcome
+- Comparing two groups **adjusting** for a covariate
+- Fitting OLS models with two predictors  
+- Model Parameters, Model Performance comparisons
+- Using `estimate_relation()` for...
+  - predictions and uncertainty intervals (PIs & CIs)
+  - back-transformation of predictions
+- Checking Model Diagnostics
+
+## Today's Packages
+
+```{r}
+#| echo: true
+
+love431_url <- 
+  "https://raw.githubusercontent.com/THOMASELOVE/431-data/refs/heads/main/data/Love-431.R"
+```
+
+- OK. Let's build our R setup...
+
+```{r}
+#| echo: true
+#| message: false
+
+knitr::opts_chunk$set(comment = NA)
+
+source(love431_url) 
+
+library(janitor)
+library(naniar)
+library(googlesheets4) ## ingest favorite movies from Google Sheets
+library(car)           
+library(easystats)
+library(tidyverse)
+
+theme_set(theme_lucid()) ## from easystats
+```
+
+## Cleveland Guardians Team Colors?
+
+```{r}
+#| echo: true
+guards_red <- "#E50022"
+guards_navy <- "#00358D"
+```
+
+Source: <https://teamcolorcodes.com/>.
+
+```{r}
+#| echo: true
+
+cream <- "#FFFCD8"
+```
+
+# Data Ingest and Management
+
+## Importing Data on Favorite Movies
+
+```{r}
+#| echo: true
+#| message: true
+gs4_deauth() # indicates to Google Drive that you're reading a public file
+
+url_movies <- "https://docs.google.com/spreadsheets/d/1LJdlS1JUYQqJidrnkJ5OmFZr009g25oiZkvtZXhXXlc"  
+## this is movies_2026-10-13 from our shared drive
+
+mov_raw <- read_sheet(url_movies, na = c("", "NA")) 
+```
+```{r}
+#| echo: true
+dim(mov_raw)
+```
+
+## Data Cleanup for Today
+
+```{r}
+#| echo: true
+#| warning: false
+
+movies <- mov_raw |>
+  select(mov_id, bw_rating, imdb_stars, gend_1, gend_2, gend_3, 
+         rt_audience, movie) |>
+  mutate(across(where(is.character), as_factor),
+         movie = as.character(movie),
+         mov_id = as.character(mov_id))
+
+movies |> head()
+```
+
+## Missingness?
+
+```{r}
+#| echo: true
+
+miss_var_summary(movies) |> filter(n_miss > 0)
+miss_case_table(movies)
+```
+
+## Which movies have missing data?
+
+```{r}
+#| echo: true
+movies |> filter(!complete.cases(bw_rating, rt_audience)) |>
+  select(mov_id, bw_rating, rt_audience, movie)
+```
+
+## How to deal with missing data?
+
+- Solution today: complete case analysis
+- Solution coming soon: (single or multiple) imputation
+
+```{r}
+#| echo: true
+movies_cc <- movies |> drop_na()
+
+dim(movies_cc)
+```
+
+## Bechdel-Wallace Rating
+
+Bechdel-Wallace scores^[Here is a [video explaining the Bechdel-Wallace test](https://feministfrequency.com/video/the-bechdel-test-for-women-in-movies/).] range from 0 to 3, and are a count of how many of these standards are met by the movie: 
+
+1. It has to have at least two named women in it. 
+2. Who talk to each other 
+3. About something besides a man. 
+
+A passing score is 3, anything less doesn't pass the test. 
+
+- We'll create `bw_test` to show Pass or Fail.
+
+## Star Genders
+
+`gend_1`, `gend_2` and `gend_3` represent the genders (M or F) played in the movie by each of the first three listed stars on IMDB.
+
+- We'll create a variable called `females` to count the number of female stars (0-3).
+
+## Code to create new variables
+
+```{r}
+#| echo: true
+movies_cc <- movies_cc |> 
+  mutate(bw_test = factor(bw_rating == 3),
+         bw_test = fct_recode(bw_test, "Pass" = "TRUE", "Fail" = "FALSE")) |>
+  mutate(females = as.numeric(gend_1 == "F") + 
+           as.numeric(gend_2 == "F") + as.numeric(gend_3 == "F"))
+```
+
+### Checking our cleaning
+
+```{r}
+#| echo: true
+
+movies_cc |> select(mov_id, bw_test, bw_rating, females, gend_1, gend_2, gend_3) |>
+  head()
+```
+
+
+
+## Tabulating the New Variables
+
+```{r}
+#| echo: true
+
+movies_cc |> tabyl(bw_test, females) |> 
+  adorn_totals(where = c("row", "col")) |> 
+  adorn_title()
+```
+
+Let's put Pass before Fail in the `bw_test` variable when we fit models:
+
+```{r}
+#| echo: true
+
+movies_cc <- movies_cc |> mutate(bw_test = fct_relevel(bw_test, "Pass"))
+```
+
+## Today's Outcome: `imdb_stars`
+
+- 1 star = worst possible, 10 stars = best possible
+
+```{r}
+#| echo: true
+
+ggplot(movies_cc, aes(x = imdb_stars)) +
+  geom_histogram(binwidth = 0.25, fill = guards_red, col = cream)
+```
+
+## A Covariate: `rt_audience` 
+
+- This is the Popcornmeter, audience scores on 0-100 scale
+
+```{r}
+#| echo: true
+
+ggplot(movies_cc, aes(x = rt_audience)) +
+  geom_histogram(binwidth = 2, fill = guards_red, col = cream)
+```
+
+## Audience Reaction Measures
+
+- `imdb_stars` (1 = worst possible, 10 = best possible)
+
+```{r}
+#| echo: true
+movies_cc |> reframe(lovedist(imdb_stars))
+```
+
+- `rt_audience` (0 to 100 scale: the "Popcornmeter")
+
+```{r}
+#| echo: true
+movies_cc |> reframe(lovedist(rt_audience))
+```
+
+## Today's Analyses
+
+```{r}
+#| echo: true
+movies1 <- movies_cc |> select(mov_id, bw_test, imdb_stars, 
+                               females, rt_audience, movie)
+dim(movies1)
+```
+
+1. Do movies which pass the `bw_test` have more (or fewer) `imdb_stars` than movies which do not pass it?
+2. Would adjusting for the number of female characters among the first three stars (`females`) change our thinking about the association in analysis 1?
+3. Would adjusting for the Rotten Tomatoes Popcornmeter (`rt_audience`) change our thinking about analysis 1?
+
+# Analysis 1
+
+## IMDB Stars by `bw_test` (pass/fail)
+
+```{r}
+#| echo: true
+
+ggplot(movies1, aes(x = imdb_stars, y = bw_test)) +
+  geom_violin(col = guards_red) +
+  geom_boxplot(width = 0.3, col = guards_red, fill = cream, outlier.size = 3) +
+  stat_summary(geom = "point", fun = mean, shape = 16, size = 3, col = guards_navy)
+```
+
+## Analysis 1: Numerical Summary
+
+1. Do movies which pass the `bw_test` have more (or fewer) `imdb_stars` than movies which do not pass it?
+
+```{r}
+#| echo: true
+
+movies1 |>
+  reframe(lovedist(imdb_stars), .by = bw_test)
+```
+
+- What should we do to compare these means?
+  - t test / OLS model, Bayes t test / model, Bootstrap, Wilcoxon rank sum test?
+
+## Box-Cox?
+
+```{r}
+#| echo: true
+
+fit0 <- lm(imdb_stars ~ bw_test, data = movies1)
+boxCox(fit0, lambda = seq(-2, 5, 1/10))
+```
+
+## Squaring the outcome?
+
+```{r}
+#| echo: true
+
+ggplot(movies1, aes(x = imdb_stars^2, y = bw_test)) +
+  geom_violin(col = guards_red) +
+  geom_boxplot(width = 0.3, col = guards_red, fill = cream, outlier.size = 3) +
+  stat_summary(geom = "point", fun = mean, shape = 16, size = 3, col = guards_navy)
+```
+
+## Cubing the outcome?
+
+```{r}
+#| echo: true
+
+ggplot(movies1, aes(x = imdb_stars^3, y = bw_test)) +
+  geom_violin(col = guards_red) +
+  geom_boxplot(width = 0.3, col = guards_red, fill = cream, outlier.size = 3) +
+  stat_summary(geom = "point", fun = mean, shape = 16, size = 3, col = guards_navy)
+```
+
+## Tesseracting? (outcome^4)
+
+```{r}
+#| echo: true
+
+ggplot(movies1, aes(x = imdb_stars^4, y = bw_test)) +
+  geom_violin(col = guards_red) +
+  geom_boxplot(width = 0.3, col = guards_red, fill = cream, outlier.size = 3) +
+  stat_summary(geom = "point", fun = mean, shape = 16, size = 3, col = guards_navy)
+```
+
+## Which shall we choose?
+
+- If our main goal is to create an interpretable model, then we have a different answer than if our main goal is to transform until the data appear as close to a Normal distribution as possible.
+- Most of the time, I stick with simpler transformations, that I can back out of easily, like squares, logs, square roots and inverses.
+
+So here, I'll go with `imdb_stars` squared...
+
+```{r}
+#| echo: true
+movies1 <- movies1 |>
+  mutate(stars_sq = imdb_stars^2)
+```
+
+## OLS Linear Model (t test)
+
+```{r}
+#| echo: true
+
+fit1 <- lm(stars_sq ~ bw_test, data = movies1)
+model_parameters(fit1, ci = 0.9)
+```
+
+- What does the intercept in `fit1` mean?
+- What does the slope of `bw_test` mean in `fit1`?
+
+## OLS Linear Model (t test)
+
+```{r}
+#| echo: true
+
+fit1 <- lm(stars_sq ~ bw_test, data = movies1)
+model_parameters(fit1, ci = 0.9)
+```
+
+::: {.incremental}
+
+Interpretation?
+
+- Movies which failed the Bechdel-Wallace test had a higher average (squared number of IMDB stars) by 2.38 than did movies which passed the B-W test.
+:::
+
+## OLS Linear Model (t test)
+
+```{r}
+#| echo: true
+
+fit1 <- lm(stars_sq ~ bw_test, data = movies1)
+model_parameters(fit1, ci = 0.9, pretty_names = FALSE)
+```
+
+Interpretation?
+
+- The data are consistent at the 90% confidence level with (0.07, 4.69) more (squared IMDB stars) on average when `bw_test` is Fail, assuming a random sample of movies, and that our model `fit1` is correct.
+
+## Estimating the Effect with `fit1`
+
+```{r}
+#| echo: true
+
+estimate_contrasts(fit1, contrast = "bw_test", ci = 0.90)
+```
+
+- Same results as previous slide.
+- More useful if we have more than 2 levels of our predictor, naturally.
+
+## Is `fit1` correct?
+
+```{r}
+#| echo: true
+#| message: false
+
+set.seed(43101)
+plot(check_model(fit1, check = c("pp_check", "qq")))
+```
+
+## Let's keep in the trend...
+
+```{r}
+#| echo: true
+#| message: false
+
+set.seed(43102)
+plot(check_model(fit1, check = c("pp_check", "qq"), detrend = FALSE))
+```
+
+
+## Which plots are useful?
+
+If we have at least one quantitative predictor, then we consider all five  diagnostic plots carefully.
+
+- The 5 Plots include: linearity, homogeneity, influential points, as well as posterior predictive check and Normal Q-Q plot of residuals.
+- If we have only a categorical predictor (or predictors), then we will focus on 2 plots: the **posterior predictive check** and the **Normal Q-Q plot of residuals**.
+
+## Useful here?
+
+```{r}
+#| echo: true
+#| message: false
+
+plot(check_model(fit1, check = c("linearity", "homogeneity")))
+```
+
+## Useful here?
+
+```{r}
+#| echo: true
+#| message: false
+
+plot(check_model(fit1, check = "outliers"))
+```
+
+## Performance of the model
+
+```{r}
+#| echo: true
+
+model_performance(fit1)
+```
+
+- Can we provide some context for the `Sigma` value?
+
+```{r}
+#| echo: true
+
+movies1 |> reframe(lovedist(imdb_stars^2), .by = bw_test)
+```
+
+## Uncertainty Intervals
+
+When making **predictions**, we can build confidence or prediction intervals using our linear regression model.
+
+- We can do so using `estimate_relation()`...
+  - **confidence intervals**: describe the mean across a population of subjects with this predictor value
+  - **prediction intervals**: describe the best estimate for a single new subject with this predictor value.
+- We can also transform the predictions and intervals back to our original outcome (`imdb_stars`).
+
+## Estimate Relation with `fit1`
+
+```{r}
+#| echo: true
+
+estimate_relation(fit1, ci = 0.90)
+```
+
+- From `fit1`: Predicted `stars_sq` when `bw_test` is "Pass" = 57.25, with 90% confidence interval (55.73, 58.76).
+- Predicted `stars_sq` when `bw_test` is "Fail" = 59.63, with 90% CI (57.88. 61.37).
+
+## Transform and predict `imdb_stars`
+
+1. Refit `fit1` to clarify the outcome transformation to R.
+
+```{r}
+#| echo: true
+
+fit1a <- lm((imdb_stars)^2 ~ bw_test, data = movies1)
+```
+
+2. Back-transform predictions, with 90% **confidence intervals**.
+
+```{r}
+#| echo: true
+estimate_relation(fit1a, ci = 0.90, transform = TRUE) ## back-transform
+```
+
+## Prediction Plot with CIs
+
+```{r}
+#| echo: true
+
+plot(estimate_relation(fit1a, ci = 0.90, transform = TRUE)) +
+  labs(title = "Predictions from `fit1a` with 90% Confidence Intervals")
+```
+
+## Prediction Intervals
+
+```{r}
+#| echo: true
+
+estimate_relation(fit1a, ci = 0.90, transform = TRUE, 
+                  predict = "prediction")
+```
+
+- What is the difference between these prediction intervals and the 90% confidence intervals we saw 2 slides ago?
+
+## Prediction Plot with PIs
+
+```{r}
+#| echo: true
+
+plot(estimate_relation(fit1a, ci = 0.90, 
+                       predict = "prediction", transform = TRUE)) +
+  labs(title = "Predictions from `fit1a` with 90% Prediction Intervals")
+```
+
+## Uncertainty Intervals
+
+We can build uncertainty intervals using our linear model for *new predictor values*, but if the outcome is transformed, we must back-transform manually.
+
+- For **confidence intervals** for the mean across a population of subjects with (new) specified values of the predictors, use `estimate_expectation()`.
+- For **prediction intervals** for a single new subject with (new) specified values of the predictors, use `estimate_prediction()`.
+
+---
+
+```{r}
+#| echo: true
+
+estimate_expectation(fit1, contrast = "bw_test", ci = 0.90,
+                     data = tibble(bw_test = c("Pass", "Fail")))
+```
+
+`fit1` predictions (and 90% **confidence intervals**) for average `imdb_stars` across many movies...
+
+`bw_test` | Predicted `imdb_stars` | 90% CI for `imdb_stars`
+--------- | ---------------------- | -----------------------
+Pass | $\sqrt{57.25}$ = `r round_half_up(sqrt(57.25),2)` | (`r round_half_up(sqrt(55.73),2)`, `r round_half_up(sqrt(58.76),2)`)
+Fail | $\sqrt{59.63}$ = `r round_half_up(sqrt(59.63),2)` | (`r round_half_up(sqrt(57.88),2)`, `r round_half_up(sqrt(61.37),2)`)
+
+---
+
+```{r}
+#| echo: true
+
+estimate_prediction(fit1, ci = 0.90,
+                    data = tibble(bw_test = c("Pass", "Fail")))
+```
+
+`fit1` predictions (and 90% **prediction intervals**) for `imdb_stars` for a single new movie...
+
+`bw_test` | Predicted `imdb_stars` | 90% CI for `imdb_stars`
+--------- | ---------------------- | -----------------------
+Pass | $\sqrt{57.25}$ = `r round_half_up(sqrt(57.25),2)` | (`r round_half_up(sqrt(38.59),2)`, `r round_half_up(sqrt(75.91),2)`)
+Fail | $\sqrt{59.63}$ = `r round_half_up(sqrt(59.63),2)` | (`r round_half_up(sqrt(40.95),2)`, `r round_half_up(sqrt(78.31),2)`)
+
+# Standing Break
+
+# Analysis 2
+
+## Adjusting for a Covariate
+
+2. Would adjusting for the number of female characters among the first three stars (females) change our thinking about the association in analysis 1?
+
+Analysis 1 conclusion:
+
+- Movies that failed had 2.38 more (90% CI: 0.07, 4.69) "`imdb_stars` squared" than did movies that passed the Bechdel-Wallace test, assuming our sample is randomly drawn from all movies of interest, and that our regression model for `stars_sq` is correct.
+
+## Fit model `fit2`
+
+Let's include both the key predictor (`bw_test`) and the covariate (`females`) in the model for `stars_sq`...
+
+```{r}
+#| echo: true
+fit2 <- lm(stars_sq ~ bw_test + females, data = movies1)
+model_parameters(fit2, ci = 0.90, pretty_names = FALSE)
+```
+
+- What does this intercept (61.19) mean?
+
+## Interpreting `fit2` intercept
+
+```{r}
+#| echo: true
+model_parameters(fit2, ci = 0.90, pretty_names = FALSE)
+```
+
+Intercept = 60.96 specifies the predicted `stars_sq` according to the `fit2` model if **both** `bw_testFail` = 0 **and** `females` = 0.
+
+- `bw_testFail` = 1 if `bw_test` = Fail, and 
+- `bw_testFail` = 0 if `bw_test` = Pass, so...
+
+## `fit2` Intercept
+
+```{r}
+#| echo: true
+model_parameters(fit2, ci = 0.90, pretty_names = FALSE)
+```
+
+- Model `fit2` predicts that for a movie with 0 females among the three main stars, and a passing `bw_test` result, the `stars_sq` will be 60.96 (so the predicted `imdb_stars` = $\sqrt{60.96}$ = 7.81 stars.)
+
+## Interpret `bw_test` slope
+
+```{r}
+#| echo: true
+model_parameters(fit2, ci = 0.90, pretty_names = FALSE)
+```
+
+- What does the slope of `bw_test` mean here?
+
+## Interpret slope of `bw_test`
+
+```{r}
+#| echo: true
+model_parameters(fit2, ci = 0.90, pretty_names = FALSE)
+```
+
+Suppose we have two movies, each with the **same** number of females in its first three stars, but one movie passed and the other failed the B-W test.
+
+The model `fit2` predicts that the movie which failed will have 0.53 more "`imdb_stars` squared" than the movie which passed, with 90% CI (-2.00, 3.05).
+
+## Interpret `females` slope
+
+```{r}
+#| echo: true
+model_parameters(fit2, ci = 0.90, pretty_names = FALSE)
+```
+
+- What does the slope of `females` mean?
+
+## Interpret slope of `females`
+
+```{r}
+#| echo: true
+model_parameters(fit2, ci = 0.90, pretty_names = FALSE)
+```
+
+Suppose we have two movies, each with the **same** B-W test result, but movie A has one more female in its first three stars than movie B.
+
+- The model `fit2` predicts that movie A will have 2.72 fewer "`imdb_stars` squared" than movie B, with 90% CI (1.12, 4.32) fewer "`imdb_stars` squared".
+
+## `fit1` and `fit2` parameters
+
+What do we learn from this comparison?
+
+```{r}
+#| echo: true
+model_parameters(fit1, ci = 0.90, pretty_names = FALSE)
+model_parameters(fit2, ci = 0.90, pretty_names = FALSE)
+```
+
+- Do the differences in slope for `bw_testFail` make sense?
+
+## Model Performance?
+
+```{r}
+#| echo: true
+model_performance(fit1)
+model_performance(fit2)
+```
+
+- `fit2` has better (smaller) AIC, AICc, BIC, RMSE and Sigma
+- `fit2` also has better (larger) R-squared and adjusted R-squared
+
+## Performance Comparison Plot
+
+```{r}
+#| echo: true
+
+plot(compare_performance(fit1, fit2))
+```
+
+## Diagnostics for `fit2`?
+
+```{r}
+#| echo: true
+set.seed(43103)
+plot(check_model(fit2, check = c("pp_check", "qq"), detrend = FALSE))
+```
+
+## Predictions with `fit2`?
+
+```{r}
+#| echo: true
+
+fit2a <- lm((imdb_stars^2) ~ bw_test + females, data = movies1)
+estimate_relation(fit2, ci = 0.9)
+```
+
+## No prediction at Fail, 3 females?
+
+Recall the original data...
+
+```{r}
+#| echo: true
+
+movies1 |> tabyl(bw_test, females)
+```
+
+- With no observations in the (Fail, 3) cell to work with, R won't make a prediction.
+
+## Back-transform predictions?
+
+```{r}
+#| echo: true
+
+fit2a <- lm((imdb_stars^2) ~ bw_test + females, data = movies1)
+estimate_relation(fit2a, ci = 0.9, transform = TRUE)
+```
+
+## `fit2` predictions with CIs
+
+```{r}
+#| echo: true
+
+plot(estimate_relation(fit2a, ci = 0.9, transform = TRUE)) +
+  labs(title = "Predicted imdb_stars with 90% CIs")
+```
+
+## `fit2` predictions with PIs
+
+```{r}
+#| echo: true
+
+plot(estimate_relation(fit2a, ci = 0.9, transform = TRUE, 
+                       predict = "prediction")) +
+  labs(title = "Predicted imdb_stars with 90% PIs")
+```
+
+## Other `fit2` Diagnostics?
+
+```{r}
+#| echo: true
+plot(check_model(fit2, check = c("linearity", "homogeneity")))
+```
+
+## Other `fit2` Diagnostics?
+
+```{r}
+#| echo: true
+plot(check_model(fit2, check = c("outliers")))
+```
+
+# Analysis 3
+
+## Adjusting for a Covariate
+
+3. Would adjusting for the Rotten Tomatoes Popcornmeter (`rt_audience`) change our thinking about analysis 1?
+
+Analysis 1 conclusion:
+
+- Movies that failed had 2.38 more (90% CI: 0.07, 4.69) "`imdb_stars` squared" than did movies that passed the Bechdel-Wallace test, assuming our sample is randomly drawn from all movies of interest, and that our regression model for `stars_sq` is correct.
+
+## Fit a model (1st try)
+
+Let's include both the key predictor (`bw_test`) and the covariate (`rt_audience`) in the model for `stars_sq`...
+
+```{r}
+#| echo: true
+fit3x <- lm(stars_sq ~ bw_test + rt_audience, 
+            data = movies1)
+model_parameters(fit3x, ci = 0.90, pretty_names = FALSE)
+```
+
+- What does this intercept (0.47) mean?
+- `rt_audience` had minimum 34 and maximum 99, in our data, on the 0-100 scale.
+
+## Centering the Covariate
+
+In the `movies1` data, the variable `rt_audience` has mean `r round_half_up(mean(movies1$rt_audience),2)`.
+
+- We'll center our covariate (`rt_audience`) by subtracting its mean.
+- This will help our intercept term in the model to mean something, since centered(rt_audience) = 0 means the mean value of `rt_audience`.
+
+## Centering `rt_audience`
+
+```{r}
+#| echo: true
+movies1 <- movies1 |>
+  mutate(rt_aud_c = center(rt_audience),
+         rt_aud_c2 = rt_audience - mean(rt_audience))
+
+movies1 |> 
+  select(mov_id, rt_audience, rt_aud_c, rt_aud_c2, movie) |>
+  head(4)
+```
+
+## Interpreting `fit3` intercept
+
+```{r}
+#| echo: true
+fit3 <- lm(stars_sq ~ bw_test + rt_aud_c, data = movies1)
+model_parameters(fit3, ci = 0.90, pretty_names = FALSE)
+```
+
+Intercept = 57.64 specifies the predicted `stars_sq` according to the `fit3` model if **both** `bw_test` = "Pass" **and** `rt_audience` is at its mean.
+
+## Interpret `bw_test` slope
+
+```{r}
+#| echo: true
+model_parameters(fit3, ci = 0.90, pretty_names = FALSE)
+```
+
+Suppose we have two movies, each with the **same** Rotten Tomatoes audience rating, but one movie passed and the other failed the B-W test.
+
+The model `fit3` predicts that the movie which failed will have 1.47 more "`imdb_stars` squared" than the movie which passed, with 90% CI (-0.05, 2.99).
+
+## Interpret `rt_aud_c` slope
+
+```{r}
+#| echo: true
+model_parameters(fit3, ci = 0.90, pretty_names = FALSE)
+```
+
+Suppose we have two movies, each with the **same** B-W test result, but movie A has a Rotten Tomatoes Audience Score 1 point higher than movie B.
+
+- The model `fit3` predicts that movie A will have 0.69 more "`imdb_stars` squared" than movie B, with 90% CI (0.63, 0.75).
+
+## `fit1` and `fit3` parameters
+
+```{r}
+#| echo: true
+model_parameters(fit1, ci = 0.90, pretty_names = FALSE)
+model_parameters(fit3, ci = 0.90, pretty_names = FALSE)
+```
+
+## Model Performance?
+
+```{r}
+#| echo: true
+model_performance(fit1)
+model_performance(fit3)
+```
+
+- `fit3` has better (smaller) AIC, AICc, BIC, RMSE and Sigma
+- `fit3` also has better (larger) R-squared and adjusted R-squared
+
+## Performance Comparison Plot
+
+```{r}
+#| echo: true
+
+plot(compare_performance(fit1, fit3))
+```
+
+## `fit3` vs. `fit2`?
+
+```{r}
+#| echo: true
+
+plot(compare_performance(fit2, fit3))
+```
+
+## Predictions with `fit3`?
+
+```{r}
+#| echo: true
+
+fit3a <- lm((imdb_stars^2) ~ bw_test + center(rt_audience),
+            data = movies1)
+estimate_relation(fit3a, ci = 0.9)
+```
+
+## Back-transform predictions?
+
+```{r}
+#| echo: true
+
+fit3b <- lm((imdb_stars^2) ~ center(rt_audience) + bw_test,
+            data = movies1)
+estimate_relation(fit3b, ci = 0.9, transform = TRUE)
+```
+
+## `fit3` predictions with CIs
+
+```{r}
+#| echo: true
+
+plot(estimate_relation(fit3b, ci = 0.9, transform = TRUE)) +
+  scale_fill_viridis_d() +
+  labs(title = "fit3b Predicted imdb_stars with 90% CIs")
+```
+
+## `fit3b` predictions with PIs
+
+```{r}
+#| echo: true
+
+plot(estimate_relation(fit3b, ci = 0.9, transform = TRUE, 
+                       predict = "prediction")) +
+  scale_fill_oi() +
+  labs(title = "fit3b Predicted imdb_stars with 90% PIs")
+```
+
+## Diagnostics for `fit3`?
+
+```{r}
+#| echo: true
+set.seed(43104)
+plot(check_model(fit3, check = c("pp_check", "qq"), detrend = FALSE))
+```
+
+## Other `fit3` Diagnostics?
+
+```{r}
+#| echo: true
+plot(check_model(fit3, check = c("linearity", "homogeneity")))
+```
+
+## What movie is the big outlier?
+
+```{r}
+#| echo: true
+
+movies1 <- movies1 |>
+  mutate(pred3 = fit3$fitted.values, res3 = fit3$resid)
+temp <- movies1 |> 
+  select(mov_id, rt_aud = rt_audience, bw_test, stars_sq,
+         pred3, res3, movie) |> arrange(res3) 
+temp |> head(3) ## three most negative residuals
+temp |> tail(3) ## three most positive residuals
+```
+
+# Could we make other decisions?
+
+## What if we cubed `imdb_stars`?
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+movies1 <- movies1 |> 
+  mutate(stars_cubed = imdb_stars^3)
+
+fit4a <- lm(stars_cubed ~ bw_test + rt_aud_c,
+           data = movies1)
+
+set.seed(43105)
+plot(check_model(fit4a, 
+                 check = c("pp_check", "qq"), 
+                 detrend = FALSE), 
+     colors = c(guards_navy, guards_red))
+```
+
+## `imdb_stars` to the 4th power?
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+movies1 <- movies1 |> 
+  mutate(stars_4 = imdb_stars^4)
+
+fit5 <- lm(stars_4 ~ bw_test + rt_aud_c,
+           data = movies1)
+
+set.seed(43106)
+plot(check_model(fit5, 
+                 check = c("pp_check", "qq"), 
+                 detrend = FALSE), 
+     colors = c(guards_navy, guards_red))
+```
+
+## That's all, folks!
+
+Is there more we could do? Sure. There always is.
+
+```{r}
+#| echo: true
+xfun::session_info()
+```
