@@ -568,7 +568,7 @@ fit2 <- lm(stars_sq ~ bw_test + females, data = movies1)
 model_parameters(fit2, ci = 0.90, pretty_names = FALSE)
 ```
 
-- What does this intercept (61.19) mean?
+- What does this intercept (60.96) mean?
 
 ## Interpreting `fit2` intercept
 
