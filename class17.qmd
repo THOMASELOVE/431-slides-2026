@@ -490,3 +490,4 @@ More to come. See [Chapter 17 of our Course Book](https://thomaselove.github.io/
 #| echo: true
 xfun::session_info()
 ```
+

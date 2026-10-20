@@ -1,0 +1,771 @@
+---
+title: "431 Class 18"
+author: Thomas E. Love, Ph.D.
+date: "2026-10-27"
+format:
+  revealjs: 
+    theme: dracula
+    embed-resources: true
+    self-contained: true
+    slide-number: true
+    footnotes-hover: true
+    preview-links: auto
+    date-format: iso
+    footer: "431 Class 18 | 2026-10-27 | <https://thomaselove.github.io/431-2026/>"
+---
+
+## Today's Agenda
+
+Two-Factor (Two-Way) Analysis of Variance
+
+- The importance of interaction
+- Interpreting ANOVA output
+- What are the key model checks for ANOVA?
+- Comparing Model Performance Indices
+- What if we add a covariate?
+
+## Today's Packages
+
+```{r}
+#| echo: true
+#| message: false
+
+knitr::opts_chunk$set(comment = NA)
+
+library(googlesheets4)
+library(gt)
+library(janitor)
+library(mice)
+library(naniar)
+library(easystats)
+library(tidyverse)
+
+theme_set(theme_bw())
+```
+
+
+## Favorite Movies Data
+
+```{r}
+#| echo: true
+#| message: true
+#| cache: true
+gs4_deauth() # indicates to Google Drive that you're reading a public file
+
+url_movies <- "https://docs.google.com/spreadsheets/d/1LJdlS1JUYQqJidrnkJ5OmFZr009g25oiZkvtZXhXXlc"  
+## this is movies_2026-10-13 from our shared drive
+
+mov_raw <- read_sheet(url_movies, na = c("", "NA")) 
+```
+
+```{r}
+#| echo: true
+dim(mov_raw)
+```
+
+## Describing Today's Variables {.smaller}
+
+- Favorite movies from students in 2020-2026
+
+ Variable | Description |
+---------------:|:-------------------------------------------------------
+`mov_id` | M-xxx code to identify movie
+`metascore` | **outcome**: critic rating (0 to 100) pulled from [Metacritic](https://www.metacritic.com/)
+`drama` | Is drama one of the [IMDB](https://www.imdb.com/) genres for this movie? (1 = yes, 0 = no)
+`comedy` | Is comedy one of the [IMDB](https://www.imdb.com/) genres for this movie? (1 = yes, 0 = no)
+`bacon_s1` | Bacon number (from [Oracle of Bacon](https://oracleofbacon.org/)) for movie's first listed star
+`rt_audience` | Audience rating (0 to 100) from [Rotten Tomatoes](https://www.rottentomatoes.com/)
+`movie` | Movie Name to identify movie
+
+- Bacon number = # of movies it takes to connect the star to Kevin Bacon. 
+  - Bacon = 1: star has been in a movie with Kevin Bacon.
+  - None of our 282 movies feature Kevin Bacon, as it turns out.
+
+## Today's analytic data
+
+```{r}
+#| echo: true
+mov_18 <- mov_raw |>
+  select(mov_id, metascore, drama, comedy, bacon_s1, rt_audience, movie) |>
+  mutate(drama = factor(drama), comedy = factor(comedy),
+         bacon_s1 = factor(bacon_s1), movie = as.character(movie))
+
+mov_18 |> gt_preview(top_n = 5, bottom_n = 1, incl_rownums = TRUE) |>
+  tab_options(table.font.size = 24)
+```
+
+## Dealing with missing values
+
+```{r}
+#| echo: true
+
+miss_var_summary(mov_18) |> filter(n_miss > 0) |> 
+  gt() |> tab_options(table.font.size = 20)
+miss_case_table(mov_18) |> 
+  gt() |> tab_options(table.font.size = 20)
+```
+
+## Can we assume MCAR?
+
+Can we use data to assess whether assuming **MCAR** is reasonable?
+
+```{r}
+#| echo: true
+
+mov_18 |> mcar_test()
+```
+
+With a high chi-square statistic and tiny *p* value from the [Little (1988) test](https://www.tandfonline.com/doi/abs/10.1080/01621459.1988.10478722), we conclude that there is essentially no evidence that the data are missing completely at random.
+
+- So we should be highly motivated to impute.
+
+## Today's Imputation Strategy
+
+Today, we'll assume **MAR** and impute all missing values, including `metascore`, which will be our outcome. 
+
+- Another approach we'll often use would be to impute everything **except for** the outcome.
+
+How many imputations should we consider running?
+
+```{r}
+#| echo: true
+mov_18 |> pct_miss_case()
+```
+
+### Building 10 imputations
+
+```{r}
+#| echo: true
+set.seed(20261027)
+
+mov_18_mice10 <- mice(mov_18, m = 10, printFlag = FALSE)
+```
+
+## Two Primary Analytic Data Sets
+
+```{r}
+#| echo: true
+
+## complete cases
+mov_cc <- mov_18 |> drop_na()
+dim(mov_cc)
+n_miss(mov_cc)
+```
+
+### Selecting a single imputation
+
+```{r}
+#| echo: true
+## arbitrarily chose to look at the third imputation of 10
+mov_i3 <- complete(mov_18_mice10, 3) |> tibble()
+
+dim(mov_i3)
+n_miss(mov_i3)
+```
+
+## Example 1
+
+Suppose we want to simultaneously understand the impacts of two factors on `metascore`, specifically:
+
+- `drama` (1 or 0)
+- `comedy` (1 or 0), and
+
+and it is possible that the impact of `comedy` on `metascore` may depend on whether the movie is also a `drama` (i.e. `comedy` and `drama` may **interact**.)
+
+- For a start, we'll analyze the data with **complete cases**.
+
+## Looking at our two factors
+
+```{r}
+#| echo: true
+mov_cc |> count(drama, comedy) |> 
+  gt() |> tab_options(table.font.size = 24) |>
+  opt_stylize(style = 6, color = "blue", add_row_striping = TRUE)
+```
+
+## An interaction plot is a plot of means.
+
+Calculate and store the group means.
+
+```{r}
+#| echo: true
+ex1_means <- mov_cc |>
+  group_by(comedy, drama) |>
+  summarize(n = n(), mean_metascore = mean(metascore))
+
+ex1_means
+```
+
+## How strong is the interaction?
+
+Now, we'll plot these means, and look for a substantial interaction (non-parallel lines.)
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+ggplot(ex1_means, aes(x = drama, y = mean_metascore)) +
+  geom_line(aes(group = comedy, color = comedy)) +
+  geom_point(aes(color = comedy)) +
+  scale_color_material() +
+  labs(title = "Example 1 Interaction Plot",
+       subtitle = "Do we see substantially non-parallel lines?",
+       y = "Metascore (0-100)", 
+       x = "Drama (1 = yes, 0 = no)", 
+       color = "Comedy",
+       caption = "Complete Cases (n = 264 movies)")
+```
+
+## Two-Way ANOVA without interaction
+
+This model predicts our outcome (`metascore`) using the two factors as main effects only (with no interaction.)
+
+```{r}
+#| echo: true
+
+mainfx <- lm(metascore ~ drama + comedy, data = mov_cc)
+
+mainfx
+```
+
+$$
+metascore = 71.024 + 3.501 (drama = 1) - 5.709 (comedy = 1) 
+$$
+
+## Interpret the drama estimate: 3.50?
+
+```{r}
+#| echo: true
+model_parameters(mainfx, ci = 0.90, pretty_names = FALSE)
+```
+
+If we have two movies with the same `comedy` status, but only one has a `drama` = 1, then **on average** the dramatic movie will have a metascore that is 3.50 points higher than the movie which is not a drama, according to our `mainfx` model.
+
+## Interpret the estimate: -5.71?
+
+```{r}
+#| echo: true
+model_parameters(mainfx, ci = 0.90, pretty_names = FALSE)
+```
+
+Our `mainfx` model estimates that if we have two movies with the same drama status, but one is a comedy and the other is not, then **on average** the comedy will have a metascore that is 5.71 points lower than the movie which is not a comedy.
+
+## Interpret the intercept term?
+
+```{r}
+#| echo: true
+model_parameters(mainfx, ci = 0.90, pretty_names = FALSE)
+```
+
+71.02 is the intercept. It's the `mainfx` model's estimate of the mean of `metascore` across all movies where both `drama` is 0 and `comedy` is 0.
+
+## ANOVA table for `mainfx`
+
+```{r}
+#| echo: true
+anova(mainfx)
+```
+
+### % of Total SS explained by the two factors?
+
+-   Total SS = 1340 + 1976 + 63484 = 66800
+-   So % explained = (1340 + 1976) / 66800 = 0.0496, or 4.96%
+
+## Model `mainfx` and its assumptions
+
+- `mainfx` is a "main effects only" model. It assumes there is zero interaction between `drama` and `comedy` in predicting `metascore`.
+- Like any ANOVA model, `mainfx` makes the usual linear model assumptions (linearity, constant variance, Normality)
+    - Focus: posterior predictive check, and Normal Q-Q plot of residuals[^1].
+
+[^1]: The assessment of linearity and non-constant variance used by `check_model()` are best used when we have at least one quantitative predictor in our model.
+
+## Checking model `mainfx`
+
+```{r}
+#| echo: true
+set.seed(20264311)
+check_model(mainfx, check = c("pp_check", "qq"), detrend = FALSE)
+```
+
+## Interaction Plot, again
+
+```{r}
+#| echo: false
+
+ggplot(ex1_means, aes(x = drama, y = mean_metascore)) +
+  geom_line(aes(group = comedy, color = comedy)) +
+  geom_point(aes(color = comedy)) +
+  scale_color_material() +
+  labs(title = "Example 1 Interaction Plot",
+       subtitle = "Do we see substantially non-parallel lines?",
+       y = "Metascore (0-100)", 
+       x = "Drama (1 = yes, 0 = no)", 
+       color = "Comedy")
+```
+
+## Two-Way ANOVA with Interaction
+
+Fit the linear model, including an interaction (`*`) between our factors.
+
+```{r}
+#| echo: true
+
+withint <- lm(metascore ~ drama * comedy, data = mov_cc)
+
+withint
+```
+
+## `withint` model equation?
+
+$$
+metascore = 70.544 + 4.245 (drama = 1) - 4.740 (comedy = 1) \\
+- 1.814 (drama = 1) \times (comedy = 1)
+$$
+
+`drama` | `comedy` | Estimated `metascore`
+:---------: | :--------: | -------------:
+0 | 0 | 70.544  
+0 | 1 | 70.544 - 4.740 = 65.804
+1 | 0 | 70.544 + 4.245 = 74.789
+1 | 1 | 70.544 + 4.245 - 4.740 - 1.814 = 68.235
+
+## Effect of `comedy` = 1?
+
+Est. `metascore` | `comedy` = 0 | `comedy` = 1
+:---------: | :--------: | :----------:
+`drama` = 0 | 70.544 | 65.804  
+`drama` = 1 | 74.789 | 68.235
+
+- If `drama` = 0, difference between `comedy` = 0 and `comedy` = 1 estimates is 4.740 (70.544 - 65.804)
+- If `drama` = 1, difference between `comedy` = 0 and `comedy` = 1 estimates is 6.554 (74.789 - 68.235)
+- So the model's estimated effect of `comedy` **depends** on `drama`.
+
+## Effect of `drama` = 1?
+
+Est. `metascore` | `comedy` = 0 | `comedy` = 1
+:---------: | :--------: | :----------:
+`drama` = 0 | 70.544 | 65.804  
+`drama` = 1 | 74.789 | 68.235
+
+- If `comedy` = 0, difference between `drama` = 1 and `drama` = 0 estimates is 4.245 (74.789 - 70.544)
+- If `comedy` = 1, difference between `drama` = 1 and `drama` = 0 estimates is 2.431 (68.235 - 65.804)
+- So the model's estimated effect of `drama` **depends** on `comedy`.
+
+## ANOVA table for `withint` model
+
+```{r}
+#| echo: true
+anova(withint)
+```
+
+- Total SS = 1340 + 1976 + 50 + 63435 = 66801
+- % explained = (1340 + 1976 + 50) / 66801 = 0.0504, or 5.04%
+- Is this a big improvement over the `mainfx` model?
+
+## Checking model `withint`
+
+```{r}
+#| echo: true
+set.seed(20264312)
+check_model(withint, check = c("pp_check", "qq"), detrend = FALSE)
+```
+
+## Compare performance of our two models?
+
+```{r}
+#| echo: true
+
+compare_performance(mainfx, withint, rank = TRUE)
+```
+
+## Plot to compare performance indicators
+
+```{r}
+#| echo: true
+plot(compare_performance(mainfx, withint))
+```
+
+## Do we have a substantial interaction?
+
+- Interaction plot shows essentially parallel lines.
+- % of variation explained by the interaction term is less than 0.1% of the variation in `meta_score`, overall.
+- p value for the interaction term is pretty large ($p$ = 0.65)
+- Is there a substantial improvement in the fit with the interaction?
+    - Only in terms of raw $R^2$ and RMSE.
+
+## What if we used the single imputation instead?
+
+**In this example, nothing important changes** as it turns out.
+
+- We'll largely skip through the slides from here to the standing break, but you can review them on your own to see that nothing substantial has changed as a result of including a few more movies.
+- Doesn't mean that nothing *could have* changed, but not much did, in this case.
+
+## Table of Means?
+
+```{r}
+#| echo: true
+ex1_means_i <- mov_i3 |>
+  group_by(comedy, drama) |>
+  summarize(n = n(), mean_metascore = mean(metascore))
+
+ex1_means_i
+```
+
+## How strong is the interaction?
+
+```{r}
+#| echo: false
+
+ggplot(ex1_means_i, aes(x = drama, y = mean_metascore)) +
+  geom_line(aes(group = comedy, color = comedy)) +
+  geom_point(aes(color = comedy)) +
+  scale_color_material() +
+  labs(title = "Example 1 Interaction Plot",
+       subtitle = "Do we see substantially non-parallel lines?",
+       y = "Metascore (0-100)", 
+       x = "Drama (1 = yes, 0 = no)", 
+       color = "Comedy",
+       caption = "Single Imputation (n = 282 movies)")
+```
+
+## Two-Way ANOVA without interaction
+
+```{r}
+#| echo: true
+
+mainfx_i <- lm(metascore ~ drama + comedy, data = mov_i3)
+
+mainfx_i
+```
+
+Remember, the model with complete cases was:
+
+$$
+metascore = 71.024 + 3.501 (drama = 1) - 5.709 (comedy = 1) 
+$$
+
+## ANOVA table for `mainfx_i`
+
+```{r}
+#| echo: true
+anova(mainfx_i)
+```
+
+### % of Total SS explained by the two factors?
+
+-   Total SS = 1477 + 3415 + 68115 = 73007
+-   So % explained = (1477 + 3415) / 73007 = 0.0670, or 6.70%
+
+## Checking model `mainfx_i`
+
+```{r}
+#| echo: true
+set.seed(20264313)
+check_model(mainfx_i, check = c("pp_check", "qq"), detrend = FALSE)
+```
+
+## Two-Way ANOVA with Interaction
+
+```{r}
+#| echo: true
+
+withint_i <- lm(metascore ~ drama * comedy, data = mov_i3)
+
+withint_i
+```
+
+With complete cases, the model was: 
+
+$$
+metascore = 70.544 + 4.245 (drama = 1) - 4.740 (comedy = 1) \\
+- 1.814 (drama = 1) \times (comedy = 1)
+$$
+
+## ANOVA table for `withint_i` model
+
+```{r}
+anova(withint_i)
+```
+
+- Total SS = 1477 + 3415 + 173 + 67941 = 73006
+- % explained = (1477 + 3415 + 173) / 73006 = 0.0693, or 6.93%
+- Again, no big improvement over the `mainfx` model
+
+## Checking model `withint_i`
+
+```{r}
+#| echo: true
+set.seed(20264314)
+check_model(withint_i, check = c("pp_check", "qq"), detrend = FALSE)
+```
+
+## Plot to compare performance indicators
+
+```{r}
+#| echo: true
+plot(compare_performance(mainfx_i, withint_i))
+```
+
+## Do we have a substantial interaction?
+
+No change in any of this.
+
+- Interaction plot shows essentially parallel lines.
+- % of variation explained by the interaction term is less than 0.3% of the variation in `metascore`, overall.
+- p value for the interaction term is pretty large ($p$ = 0.40)
+- Substantial improvement in the fit with the interaction?
+    - Only in terms of raw $R^2$ and RMSE.
+
+# Standing Break
+
+## Example 2
+
+For the rest of today's work, we'll use the singly imputed data.
+
+Suppose that we now want to understand the impact on `metascore`, of:
+
+- `drama` (1 or 0), and
+- `bacon_s1` (1, 2 or 3)
+
+and it's possible that the impact of drama on metascore may depend on the first-listed star's Bacon number, and vice versa.
+
+## Build an interaction plot
+
+Calculate and store group means.
+
+```{r}
+#| echo: true
+ex2_means <- mov_i3 |>
+  group_by(drama, bacon_s1) |>
+  summarize(n = n(), mean_metascore = mean(metascore))
+
+ex2_means
+```
+
+## How strong is the interaction?
+
+Now, we'll plot these means, and look for a substantial interaction (non-parallel lines.)
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+ggplot(ex2_means, aes(x = bacon_s1, y = mean_metascore)) +
+  geom_line(aes(group = drama, color = drama)) +
+  geom_point(aes(color = drama)) +
+  scale_color_material() +
+  labs(title = "Example 2 Interaction Plot",
+       subtitle = "Do we see substantially non-parallel lines?",
+       y = "Metascore (mean)", 
+       x = "Bacon score for Star 1", 
+       color = "Drama?",
+       caption = "Single Imputation: n = 282 movies")
+```
+
+## Example 2: Two-Way ANOVA models 
+
+```{r}
+#| echo: true
+
+mainfx2 <- lm(metascore ~ bacon_s1 + drama, data = mov_i3)
+withint2 <- lm(metascore ~ bacon_s1 * drama, data = mov_i3)
+
+compare_performance(mainfx2, withint2, rank = TRUE)
+```
+
+## Plotting Performance Indices
+
+```{r}
+#| echo: true
+
+plot(compare_performance(mainfx2, withint2))
+```
+
+## Interpret `mainfx2` estimates?
+
+```{r}
+#| echo: true
+model_parameters(mainfx2, ci = 0.90, pretty_names = FALSE)
+```
+
+$$
+metascore = 65.39 + 2.98 (Bacon = 2) + 8.15 (Bacon = 3) \\
++ 4.35 (drama = 1) 
+$$
+
+## Making Predictions with `mainfx2`
+
+```{r}
+#| echo: true
+estimate_relation(mainfx2, ci = 0.90)
+```
+
+## Specify `withint2` equation?
+
+```{r}
+#| echo: true
+model_parameters(withint2, ci = 0.90, pretty_names = FALSE)
+```
+
+## Making Predictions with `withint2`
+
+```{r}
+#| echo: true
+estimate_relation(withint2, ci = 0.90)
+```
+
+## ANOVA for `mainfx2` model
+
+```{r}
+#| echo: true
+anova(mainfx2)
+```
+
+## % of Total SS explained by the two factors?
+
+```{r}
+#| echo: true
+
+eta_squared(anova(mainfx2))
+```
+
+## ANOVA table for interaction model
+
+```{r}
+#| echo: true
+anova(withint2)
+```
+
+## % of Total SS explained by the factors?
+
+```{r}
+#| echo: true
+
+eta_squared(anova(withint2))
+```
+
+## Checking model `mainfx2`
+
+```{r}
+#| echo: true
+set.seed(20264315)
+check_model(mainfx2, check = c("pp_check", "qq"), detrend = FALSE)
+```
+
+## Checking model `withint2`
+
+```{r}
+#| echo: true
+set.seed(20264316)
+check_model(withint2, check = c("pp_check", "qq"), detrend = FALSE)
+```
+
+## Substantial interaction here?
+
+- Interaction plot shows substantially non-parallel lines.
+- Interaction term explains about 1% of the variation in `metascore`, overall.
+- p value for the interaction term: ($p$ = 0.13)
+- Substantial improvement in the fit with interaction?
+    - 5/7 in-sample performance indices prefer interaction
+
+What do you think?
+
+## Treating Bacon number as quantitative?
+
+We make a lot of little decisions. Are our conclusions robust?
+
+```{r}
+#| echo: true
+
+mov_i3_extra <- mov_i3 |> mutate(bacon = as.numeric(bacon_s1))
+
+anova(lm(metascore ~ drama * bacon, data = mov_i3_extra))
+```
+
+## Example 3
+
+What if we add `rt_audience` as a covariate?
+
+- We might consider centering `rt_audience`. 
+- Here is an **analysis of covariance** model.
+
+```{r}
+#| echo: true
+fit3 <- lm(metascore ~ drama * bacon_s1 + center(rt_audience), 
+           data = mov_i3)
+```
+
+## Our ANCOVA model `fit3`
+
+```{r}
+#| echo: true
+
+anova(fit3)
+```
+
+## Variation explained by this model?
+
+```{r}
+#| echo: true
+
+eta_squared(fit3)
+```
+
+## Drop Interaction Term?
+
+```{r}
+#| echo: true
+fit3_noint <- lm(metascore ~ drama + bacon_s1 + center(rt_audience),
+             data = mov_i3)
+
+anova(fit3_noint)
+```
+
+## Compare three models?
+
+```{r}
+#| echo: true
+
+compare_performance(withint2, fit3, fit3_noint, rank = TRUE)
+```
+
+## Compare performance plot?
+
+```{r}
+#| echo: true
+
+plot(compare_performance(withint2, fit3, fit3_noint))
+```
+
+## Check model `fit3` (1/3)
+
+```{r}
+#| echo: true
+check_model(fit3, check = c("pp_check", "qq"), detrend = FALSE)
+```
+
+## Check model `fit3` (2/3)
+
+```{r}
+#| echo: true
+check_model(fit3, check = c("linearity", "homogeneity"))
+```
+
+## Check model `fit3` (3/3)
+
+```{r}
+#| echo: true
+check_model(fit3, check = c("outliers", "vif"))
+```
+
+## Next Time
+
+- Our first attempt at a general strategy for regression model building and assessment.
+- A data set containing 500 adults living with diabetes.
+
+## Session Information
+
+```{r}
+#| echo: true
+xfun::session_info()
+```
