@@ -51,7 +51,7 @@ library(broom)
 library(easystats)
 library(tidyverse)
 
-theme_set(theme_azurelight())
+theme_set(theme_bw())
 ```
 
 ## `dm500`: Where we were 
@@ -878,22 +878,6 @@ model_parameters(fit3_pool, ci = 0.89, pretty_names = FALSE) |>
 pool.r.squared(fit3_mods)
 ```
 
-## Guidelines for reporting, I (Sterne) {.smaller}
-
-How should we report on analyses potentially affected by missing data?
-
--   Report the number of missing values for each variable of interest, or the number of cases with complete data for each important component of the analysis. Give reasons for missing values if possible, and indicate how many individuals were excluded because of missing data when reporting the flow of participants through the study. If possible, describe reasons for missing data in terms of other variables (rather than just reporting a universal reason such as treatment failure.)
--   Clarify whether there are important differences between individuals with complete and incomplete data, for example, by providing a table comparing the distributions of key exposure and outcome variables in these different groups
--   Describe the type of analysis used to account for missing data (e.g., multiple imputation), and the assumptions that were made (e.g., missing at random)
-
-## Guidelines for reporting, II (Sterne) {.smaller}
-
-How should we report on analyses that involve multiple imputation?
-
--   Provide details of the imputation modeling (software used, key settings, number of imputed datasets, variables included in imputation procedure, etc.)
--   If a large fraction of the data is imputed, compare observed and imputed values.
--   Where possible, provide results from analyses restricted to complete cases, for comparison with results based on multiple imputation. If there are important differences between the results, suggest explanations.
--   It is also desirable to investigate the robustness of key inferences to possible departures from the missing at random assumption, by assuming a range of missing not at random mechanisms in sensitivity analyses.
 
 ## Session Information
 
