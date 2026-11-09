@@ -1,0 +1,733 @@
+---
+title: "431 Class 22"
+author: Thomas E. Love, Ph.D.
+date: "2026-11-12"
+format:
+  revealjs: 
+    theme: dracula
+    embed-resources: true
+    self-contained: true
+    slide-number: true
+    footnotes-hover: true
+    preview-links: auto
+    date-format: iso
+    footer: "431 Class 22 | 2026-11-12 | <https://thomaselove.github.io/431-2026/>"
+---
+
+## Today's Packages
+
+- Today's (arbitrary) confidence level = **93%**.
+
+```{r}
+#| echo: true
+#| message: false
+
+library(naniar)
+library(janitor)
+library(mice)
+library(car)
+library(patchwork)
+library(broom)
+library(GGally)
+library(gt); library(gtExtras)
+library(glue)
+library(nhanesA)     ## ingest NHANES data
+library(olsrr)       ## for best subsets
+library(easystats)
+library(tidyverse)
+
+theme_set(theme_light())
+```
+
+## Today's Agenda
+
+- An example from NHANES 2013-2014
+- Dealing with Missing Data, Partitioning, etc.
+- Most of the things we've done previously, plus...
+- Automated Variable Selection in Multiple Regression
+  - Stepwise regression (AIC-based backwards elimination)
+  - Best subsets (based on Mallows' $C_p$)
+- Some rudimentary cross-validation approaches
+
+## Outcome and Potential Predictors
+
+Data Source: [NHANES 2013-2014](https://wwwn.cdc.gov/nchs/nhanes/continuousnhanes/default.aspx?BeginYear=2013)
+
+Today, we will try to predict `waist` circumference (in cm) using some combination of these 12 candidate predictors:
+
+- body weight (in kg): expected to be primary driver
+- demographics: age, sex, race/ethnicity, marital status, educational attainment, and insurance status
+- systolic and diastolic blood pressure (1st reading), total cholesterol, self-rated oral health, sedentary minutes/day
+
+## NHANES 2013-14 data we'll use
+
+- We'll use the [Demographics file](https://wwwn.cdc.gov/nchs/nhanes/search/datapage.aspx?Component=Demographics&Cycle=2013-2014): `DEMO_H`
+- from the [Examination data](https://wwwn.cdc.gov/nchs/nhanes/search/datapage.aspx?Component=Examination&CycleBeginYear=2013): Blood Pressure `BPX_H`, and Body Measures `BMX_H`
+- from the [Laboratory data](https://wwwn.cdc.gov/nchs/nhanes/search/datapage.aspx?Component=Laboratory&Cycle=2013-2014): Cholesterol - Total `TCHOL_H` 
+- and from the [Questionnaire data](https://wwwn.cdc.gov/nchs/nhanes/search/datapage.aspx?Component=Questionnaire&Cycle=2013-2014): Health Insurance `HIQ`, Oral Health `OHQ`, and Physical Activity `PAQ`
+
+## Data Ingest from NHANES 2013-14
+
+- In the next 2 slides, I'll show the work I did to create a raw data set containing data on subjects from this administration of NHANES, using the `nhanesA` package, but I won't execute that code. 
+
+Instead, I placed an R data set of the raw data (**nh_H_raw.Rds**) on [our 431-data page](https://github.com/THOMASELOVE/431-data), which we'll use shortly.
+
+- Source: [NHANES 2013-2014 Data](https://wwwn.cdc.gov/nchs/nhanes/continuousnhanes/default.aspx?BeginYear=2013)
+
+
+## R code ingesting NHANES data
+
+```{r}
+#| echo: true
+#| eval: false
+demoH <- nhanes('DEMO_H', translated = FALSE) |> 
+  tibble() |> mutate(SEQN = as.character(SEQN))
+bpxH <- nhanes('BPX_H', translated = FALSE) |> 
+  tibble() |> mutate(SEQN = as.character(SEQN))
+bmxH <- nhanes('BMX_H', translated = FALSE) |> 
+  tibble() |> mutate(SEQN = as.character(SEQN))
+tcholH <- nhanes('TCHOL_H', translated = FALSE) |> 
+  tibble() |> mutate(SEQN = as.character(SEQN))
+hiqH <- nhanes('HIQ_H', translated = FALSE) |> 
+  tibble() |> mutate(SEQN = as.character(SEQN))
+ohqH <- nhanes('OHQ_H', translated = FALSE) |> 
+  tibble() |> mutate(SEQN = as.character(SEQN))
+paqH <- nhanes('PAQ_H', translated = FALSE) |> 
+  tibble() |> mutate(SEQN = as.character(SEQN))
+```
+
+## R code aggregating NHANES data
+
+```{r}
+#| echo: true
+#| eval: false
+t12 <- left_join(demoH, bpxH, by = "SEQN")
+t123 <- left_join(t12, bmxH, by = "SEQN")
+t1234 <- left_join(t123, tcholH, by = "SEQN")
+t12345 <- left_join(t1234, hiqH, by = "SEQN")
+t123456 <- left_join(t12345, ohqH, by = "SEQN")
+nh_H_raw <- left_join(t123456, paqH, by = "SEQN")
+
+write_rds(nh_H_raw, "c22/data/nh_H_raw.Rds")
+```
+
+## Using the `.Rds` file: pruning rows
+
+Let's ingest the raw data from the `Rds` file. 
+
+```{r}
+#| echo: true
+
+nh_H_raw <- read_rds("c22/data/nh_H_raw.Rds")
+dim(nh_H_raw)
+```
+
+Then we want to focus on adults ages 21-79 (Age is in the `RIDAGEYR` variable) who were both interviewed and MEC examined (`RIDSTATR = 2`)
+
+```{r}
+#| echo: true
+nh_H <- nh_H_raw |> 
+  filter(RIDSTATR == 2,
+         RIDAGEYR >= 21 & RIDAGEYR <= 79)
+dim(nh_H)
+```
+
+## Pruning the Variables
+
+... and replacing **Refused**, and **Don't Know** codes with `NA`.
+
+```{r}
+#| echo: true
+
+nh_H <- nh_H |>
+  select(SEQN, RIAGENDR, RIDAGEYR, RIDRETH3, DMDEDUC2, DMDMARTL,
+         BPXSY1, BPXDI1, BMXWT, BMXWAIST, LBXTC, 
+         HIQ011, HIQ031A, HIQ031B, HIQ031D, 
+         OHQ845, PAD680, WTINT2YR, WTMEC2YR) |>
+  replace_with_na(replace = 
+         list(DMDEDUC2 = c(7, 9), DMDMARTL = c(77, 99), HIQ011 = c(7, 9), 
+              HIQ031A = c(77, 99), OHQ845 = c(7, 9), PAD680 = c(7777, 9999)))
+```
+
+## Factor Cleaning (1/2)
+
+```{r}
+#| echo: true
+nh_H <- nh_H |> 
+  mutate(sex = fct_recode(factor(RIAGENDR), "M" = "1", "F" = "2")) |>
+  mutate(race_eth = fct_recode(factor(RIDRETH3), 
+            "Hispanic" = "1", "Hispanic" = "2", "NH_White" = "3", 
+            "NH_Black" = "4", "NH_Asian" = "6", "Other" = "7")) |>
+  mutate(educ = fct_recode(factor(DMDEDUC2),
+            "NonHSGrad" = "1", "NonHSGrad" = "2", "HSGrad" = "3",
+            "SomeCollege" = "4", "CollegeGrad" = "5")) |>
+  mutate(marital = fct_recode(factor(DMDMARTL),
+            "Together" = "1", "Formerly" = "2", "Formerly" = "3", 
+            "Formerly" = "4", "Never" = "5", "Together" = "6"))
+```
+
+## Factor Cleaning (2/2)
+
+```{r}
+#| echo: true
+nh_H <- nh_H |> 
+  mutate(insur = factor(case_when(
+    HIQ011 == 2 ~ "Uninsured",
+    HIQ011 == 1 & HIQ031D == 17 ~ "Medicaid",
+    HIQ011 == 1 & HIQ031B == 15 ~ "Medicare",
+    HIQ011 == 1 & HIQ031A == 14 ~ "Commercial"))) |>
+  mutate(insur = fct_relevel(insur, "Medicare")) |>
+  mutate(oral_h = fct_recode(factor(OHQ845),
+            "E" = "1", "VG" = "2", "G" = "3", "F" = "4", "P" = "5"))
+```
+
+#### Variable Renaming
+
+```{r}
+#| echo: true
+nh_H <- nh_H |> 
+  rename(age = RIDAGEYR, sbp1 = BPXSY1, dbp1 = BPXDI1, 
+         wt_kg = BMXWT, waist = BMXWAIST, tot_chol = LBXTC, 
+         sedentary = PAD680)
+```
+
+## Changing implausible values to NA
+
+- We're going to treat as missing values of systolic and diastolic blood pressure and total cholesterol that we think are implausible^[In part, this is so you can see how to do it.].
+- Suppose we believe `sbp1` and `tot_chol` should be at least 70, while `dbp1` should be at least 40.
+
+```{r}
+#| echo: true
+
+nh_H <- nh_H |> 
+  replace_with_na_at(.vars = c("sbp1", "tot_chol"), condition = ~ .x < 70) |>
+  replace_with_na_at(.vars = "dbp1", condition = ~ .x < 40)
+```
+
+## The `nh_H` data after that work
+
+```{r}
+#| echo: true
+nh_H <- nh_H |> 
+  select(SEQN, waist, wt_kg, age, sex, race_eth, marital, educ, insur, 
+         sbp1, dbp1, waist, tot_chol, oral_h, sedentary, WTINT2YR, WTMEC2YR)
+
+gt_preview(nh_H)
+```
+
+## Variable Descriptions (1/3)
+
+Variable | Description | NA
+-------: | :-------------------------------- | --:
+`SEQN` | Subject identifier code | `r n_miss(nh_H$SEQN)`
+`waist` | Waist circumference (cm) | `r n_miss(nh_H$waist)`
+`wt_kg` | Body weight (kg) | `r n_miss(nh_H$wt_kg)`
+`age` | age in years (21-79) | `r n_miss(nh_H$age)`
+`sex` | M or F | `r n_miss(nh_H$sex)`
+`race_eth` | race/ethnicity (5 categories) | `r n_miss(nh_H$race_eth)`
+
+## Variable Descriptions (2/3)
+
+Variable | Description | NA
+-------: | :-------------------------------- | --:
+`marital` | marital status (3 categories) | `r n_miss(nh_H$marital)`
+`educ` | educational attainment (4 categories) | `r n_miss(nh_H$educ)`
+`insur` | primary insurance (4 categories) | `r n_miss(nh_H$insur)`
+`sbp1` | 1st Systolic BP reading (mm Hg) | `r n_miss(nh_H$sbp1)`
+`dbp1` | 1st Diastolic BP reading (mm Hg) | `r n_miss(nh_H$dbp1)`
+`tot_chol` | Total Cholesterol (mg/dl) | `r n_miss(nh_H$tot_chol)`
+
+## Variable Descriptions (3/3)
+
+Variable | Description | NA
+-------: | :-------------------------------- | --:
+`oral_h` | self-reported oral health (5 levels) | `r n_miss(nh_H$oral_h)`
+`sedentary` | typical day: sedentary activity (minutes) | `r n_miss(nh_H$sedentary)`
+`WTINT2YR` | sampling weight for interview items | `r n_miss(nh_H$WTINT2YR)`
+`WTMEC2YR` | sampling weight for examination items | `r n_miss(nh_H$WTMEC2YR)`
+
+## `data_codebook()` results
+
+```{r}
+#| echo: true
+data_codebook(nh_H |> select(-SEQN, -WTINT2YR, -WTMEC2YR))
+```
+
+## Missing Data by Variable
+
+```{r}
+#| echo: true
+miss_var_summary(nh_H) |> filter(n_miss > 0)
+```
+
+## Missing Data
+
+```{r}
+#| echo: true
+
+dim(nh_H)
+miss_case_table(nh_H)
+pct_miss_case(nh_H)
+```
+
+## Missingness Mechanism
+
+Can we assume the data are MCAR, per Little's test?
+
+```{r}
+#| echo: true
+mcar_test(nh_H)
+```
+
+- Looks like we'll need to assume MAR and do some imputation.
+
+## Outcome and Potential Predictors
+
+Again, our goal is to try to predict `waist` circumference (in cm) using some combination of these 12 candidate predictors:
+
+- body weight (in kg): expected to be primary driver
+- demographics: age, sex, race/ethnicity, marital status, educational attainment, and insurance status
+- systolic and diastolic blood pressure, total cholesterol, self-rated oral health, sedentary minutes/day
+
+We'll generate several possible models.
+
+## Single imputation
+
+```{r}
+#| label: single_imputation
+#| echo: true
+#| warning: true
+
+set.seed(20251118)
+nh_i1 <- mice(nh_H, m = 1, printFlag = FALSE)
+nh_si <- complete(nh_i1) ## si for single imputation
+n_miss(nh_si)
+```
+
+We'll use this single imputation for decision-making...
+
+## Looking at the logged events
+
+- The main reasons we get logged events are:
+  - We have a "constant" term (or a variable of type **character**, which is removed from the imputation model, or
+  - One variable is completely collinear with another.
+
+```{r}
+#| echo: true
+
+nh_i1$loggedEvents
+```
+
+
+## Partition the Data
+
+```{r}
+#| label: partition_data
+#| echo: true
+c(nrow(nh_si), n_distinct(nh_si$SEQN)) # check that SEQNs are all distinct
+
+set.seed(2025431)
+
+nh_train <- nh_si |> slice_sample(n = 4000, replace = FALSE)
+nh_test <- anti_join(nh_si, nh_train, by = "SEQN")
+
+c(nrow(nh_train), nrow(nh_test))
+```
+
+## Waist Circumference (our outcome)
+
+```{r}
+bw = 2.5 # specify width of bins in histogram
+
+p1 <- ggplot(nh_train, aes(x = waist)) +
+  geom_histogram(binwidth = bw, fill = "black", col = "white") +
+  stat_function(fun = function(x)
+    dnorm(x, mean = mean(nh_train$waist, na.rm = TRUE),
+          sd = sd(nh_train$waist, na.rm = TRUE)) *
+      length(nh_train$waist) * bw,  
+    geom = "area", alpha = 0.5, fill = "lightblue", col = "blue") +
+  labs(x = "Waist Circumference (cm)", y = "",
+       title = "Histogram & Normal Curve") 
+
+p2 <- ggplot(nh_train, aes(sample = waist)) +
+  geom_qq() + geom_qq_line(col = "red") +
+  labs(y = "Waist Circumference (cm)",
+       x = "Standard Normal Distribution",
+       title = "Normal Q-Q plot")
+
+p3 <- ggplot(nh_train, aes(x = waist, y = "")) +
+  geom_violin(fill = "cornsilk") +
+  geom_boxplot(width = 0.2) +
+  stat_summary(fun = mean, geom = "point", 
+               shape = 16, col = "red") +
+  labs(y = "", x = "Waist Circumference (cm)",
+    title = "Boxplot with Violin")
+
+p1 + (p2 / p3 + plot_layout(heights = c(2, 1))) +
+  plot_annotation(
+    title = "Waist Circumference seems a little right skewed",
+    subtitle = glue("NHANES 2013-14 Training Data Set (n = ", nrow(nh_train), ")"))
+```
+
+## Transform our Outcome?
+
+```{r}
+#| echo: true
+t_check <- lm(waist ~ wt_kg + age + sex + race_eth + marital + educ + 
+                insur + sbp1 + dbp1 + tot_chol + oral_h + sedentary,
+              data = nh_train)
+boxCox(t_check)
+```
+
+## Collinearity?
+
+```{r}
+#| echo: true
+
+check_collinearity(t_check)
+```
+
+# Standing Break, followed by Automated Predictor Selection (not usually a great idea, but ...)
+
+## Stepwise Regression Process
+
+Start with a model including all candidate predictors.
+
+- R looks at each variable in turn to see what would happen to AIC if we dropped it from the model.
+- It then drops the variable that most reduces the AIC, creating the first step down.
+- Then it repeats the process with the new stepped down model and drops the variable that most reduces the AIC now.
+- When we can no longer drop a variable and reduce AIC, stop.
+
+## Stepwise Regression
+
+Start with a 12-predictor model, predicting `waist` circumference.
+
+```{r}
+#| echo: true
+fit_all12 <- lm(waist ~ wt_kg + age + sex + race_eth + 
+                  marital + educ + insur + sbp1 + dbp1 + 
+                  tot_chol + oral_h + sedentary, 
+                data = nh_train)
+```
+
+Here's one way to run a backwards stepwise elimination search of our regression model, using AIC as the measure to tell us when to stop removing variables.
+
+```{r}
+#| echo: true
+#| output-location: slide
+step_res <- step(fit_all12, direction = "backward")
+```
+
+Results on the next slide.
+
+## So What Happened?
+
+- The big model (12 predictors) had an AIC of 13887
+- Dropping `dbp1` reduced the AIC a little
+- Then dropping `sbp1` reduced the AIC to 13886
+- but at that point, no additional variable removals reduce AIC. The best we can do is to drop `sedentary` but that increases AIC back to 13887.
+
+## Stepwise Regression Result
+
+So we drop two of the 12 predictors (`sbp1` and `dbp1`) and keep the remaining ten (`wt_kg`, `age`, `sex`, `race_eth`, `marital`, `educ`, `insur`, `tot_chol`, `oral_h` and `sedentary`).
+
+```{r}
+#| echo: true
+fit_step10 <- lm(waist ~ wt_kg + age + sex + race_eth + marital +
+                   educ + insur + tot_chol + oral_h + sedentary,
+                 data = nh_train)
+```
+
+It turns out that stepwise regression is pretty bad, even by the standards of automated variable selection procedures. Are there better options?
+
+- Can we generate other competitive candidate predictor sets?
+
+## A Best Subsets Approach
+
+Again, we start with our big model `fit_all12`, with all 12 predictors, but now we use a function from the **olsrr** package to complete some automated variable selection^[*Caution*: this process takes a while.]. 
+
+```{r}
+#| label: best-subsets
+#| echo: true
+
+nh_best_res <- 
+  ols_step_best_subset(fit_all12, max_order = 8, metric = "cp")
+```
+
+This code identifies the best subsets of variables according to Mallows' $C_p$ statistic, while restricting the search to models with 1-8 variables (of our original 12) included. Results on the next slide...
+
+## Results from "Best Subsets" Search {.smaller}
+
+```{r}
+nh_best_res
+```
+
+## We'll compare four options
+
+I've somewhat arbitrarily selected^[`fit12` is the "kitchen sink", `fit10` is "stepwise", `fit04` has a nice adjusted $R^2$, and `fit01` is the most crucial predictor.] these four options.
+
+```{r}
+#| echo: true
+fit_12 <- lm(waist ~ wt_kg + age + sex + race_eth + marital + 
+               educ + insur + sbp1 + dbp1 + tot_chol + 
+               oral_h + sedentary,
+             data = nh_train)
+
+fit_10 <- lm(waist ~ wt_kg + age + sex + race_eth + marital + 
+               educ + insur + tot_chol + oral_h + sedentary,
+             data = nh_train)
+
+fit_04 <- lm(waist ~ wt_kg + age + sex + race_eth, data = nh_train)
+
+fit_01 <- lm(waist ~ wt_kg, data = nh_train)
+```
+
+## Two Model Checks (`fit_12`)
+
+```{r}
+#| label: pp-check12
+#| echo: true
+set.seed(43101); check_model(fit_12, detrend = FALSE, check = c("pp_check", "linearity"))
+```
+
+## Two Model Checks (`fit_10`)
+
+```{r}
+#| label: pp-check10
+#| echo: true
+set.seed(43102); check_model(fit_10, detrend = FALSE, check = c("pp_check", "linearity"))
+```
+
+## Two Model Checks (`fit_04`)
+
+```{r}
+#| label: pp-check04
+#| echo: true
+set.seed(43103); check_model(fit_04, detrend = FALSE, check = c("pp_check", "linearity"))
+```
+
+## Two Model Checks (`fit_01`)
+
+```{r}
+#| label: pp-check01
+#| echo: true
+set.seed(43104); check_model(fit_01, detrend = FALSE, check = c("pp_check", "linearity"))
+```
+
+## Other Checks for Model `fit_04`
+
+```{r}
+#| label: check-model04_2
+#| echo: true
+set.seed(43105); check_model(fit_04, detrend = FALSE, check = c("homogeneity", "outliers"))
+```
+
+## Still more Checks for Model `fit_04`
+
+```{r}
+#| label: check-model04_3
+#| echo: true
+set.seed(43106); check_model(fit_04, detrend = FALSE, check = c("vif", "qq"))
+```
+
+## Training Sample Performance
+
+```{r}
+#| label: plot-compare-performance
+#| echo: true
+plot(compare_performance(fit_12, fit_10, fit_04, fit_01))
+```
+
+## Training Sample Performance
+
+```{r}
+#| label: compare-performance-ranks
+#| echo: true
+compare_performance(fit_12, fit_10, fit_04, fit_01, rank = TRUE) |> 
+  gt() |> fmt_number(decimals = 3) |> gt_theme_espn()
+```
+
+## Cross-Validation Performance
+
+In the training sample, we'll try some cross-validation.
+
+```{r}
+#| label: cross-validation
+#| echo: true
+set.seed(20254312)
+performance_accuracy(fit_12, method = "cv", k = 5)
+performance_cv(fit_12)
+```
+
+This is something we'll do in 432, too. We can do the same thing for the other three models (R code on next slide.)
+
+## R code for other models
+
+```{r}
+#| echo: true
+#| eval: false
+set.seed(20254313)
+performance_accuracy(fit_10, method = "cv", k = 5)
+performance_cv(fit_10)
+
+set.seed(20254314)
+performance_accuracy(fit_04, method = "cv", k = 5)
+performance_cv(fit_04)
+
+set.seed(20254315)
+performance_accuracy(fit_01, method = "cv", k = 5)
+performance_cv(fit_01)
+```
+
+## Cross-Validation Results
+
+- across the four models we're considering...
+
+Model | Accuracy | $MSE_{30}$ | $RMSE_{30}$ | $R^2_{30}$
+-----: | --------: | ------: | ------: | ------: 
+`fit_12` | 0.9409 | 34 | 5.8 | 0.87
+`fit_10` | 0.9412 | 34 | 5.8 | 0.88
+`fit_04` | 0.9378 | 35 | 5.9 | 0.87
+`fit_01` | 0.9047 | 51 | 7.1 | 0.82
+
+- Accuracy = correlation of `waist`$_{observed}$, `waist`$_{predicted}$.
+- Other summaries use 30% holdout approach.
+
+## Predicting into Test Sample
+
+```{r}
+#| label: augment-newdata
+#| echo: true
+aug01_test <- augment(fit_01, newdata = nh_test) |> mutate(mod = "fit_01")
+aug04_test <- augment(fit_04, newdata = nh_test) |> mutate(mod = "fit_04")
+aug10_test <- augment(fit_10, newdata = nh_test) |> mutate(mod = "fit_10")
+aug12_test <- augment(fit_12, newdata = nh_test) |> mutate(mod = "fit_12")
+
+temp14 <- bind_rows(aug01_test, aug04_test)
+temp140 <- bind_rows(temp14, aug10_test)
+test_res <- bind_rows(temp140, aug12_test) |>
+  relocate(SEQN, mod, waist, everything()) |> arrange(SEQN, mod)
+```
+
+## Four Summary Measures
+
+```{r}
+#| label: calculate_summaries_test
+#| echo: true
+
+test_summary <- test_res |> 
+  group_by(mod) |>
+  summarize(MAPE = mean(abs(.resid)),
+            Max_APE = max(abs(.resid)),
+            RMSE = sqrt(mean(.resid^2)),
+            R2_val = cor(waist, .fitted)^2)
+
+test_summary |> gt() |> fmt_number(decimals = 4) |> 
+  gt_theme_espn()
+```
+
+# Multiple Imputation
+
+## We'd like to do 25 imputations
+
+25 imputations on model `fit_04` takes a little while (60 seconds on my machine.)
+
+```{r}
+#| label: run_25_multiple_imps
+#| echo: true
+pct_miss_case(nh_H)
+
+imp25_ests <- nh_H |>
+  mice(m = 25, seed = 4312345, print = FALSE) |>
+  with(lm(waist ~ wt_kg + age + sex + race_eth)) |>
+  pool()
+```
+
+## Pooled Results for model `fit_04`
+
+```{r}
+#| echo: true
+glance(imp25_ests)
+
+tidy(imp25_ests, conf.int = TRUE, conf.level = 0.93) |>
+  select(term, estimate, std.error, conf.low, conf.high, p.value) |>
+  gt() |> fmt_number(decimals = 3, columns = c(-p.value)) 
+```
+
+## Training Sample Results for `fit_04`
+
+```{r}
+#| echo: true
+glance(fit_04) |> select(nobs, r.squared, adj.r.squared)
+
+tidy(fit_04, conf.int = TRUE, conf.level = 0.93) |>
+  select(term, estimate, std.error, conf.low, conf.high, p.value) |>
+  gt() |> fmt_number(decimals = 3) |> gt_theme_guardian()
+```
+
+## Single Imputation Results for `fit_04`
+
+Our model `fit_04` uses `wt_kg`, `age`, `sex` and `race_eth` to predict `waist`. Our identifying code is in `SEQN`.
+
+```{r}
+#| echo: true
+
+fit4_si <- lm(waist ~ wt_kg + age + sex + race_eth, data = nh_si)
+
+n_obs(fit4_si)
+```
+
+## Single Imputation Results for `fit_04`
+
+```{r}
+#| echo: true
+glance(fit4_si) |> select(nobs, r.squared, adj.r.squared)
+
+tidy(fit4_si, conf.int = TRUE, conf.level = 0.93) |>
+  select(term, estimate, std.error, conf.low, conf.high, p.value) |>
+  gt() |> fmt_number(decimals = 3) |> gt_theme_guardian()
+```
+
+## Building "Complete Case" Data
+
+Our model `fit_04` uses `wt_kg`, `age`, `sex` and `race_eth` to predict `waist`. Our identifying code is in `SEQN`.
+
+```{r}
+#| echo: true
+
+nh_cc <- nh_H |> select(SEQN, waist, wt_kg, age, sex, race_eth) |>
+  drop_na()
+
+fit4_cc <- lm(waist ~ wt_kg + age + sex + race_eth, data = nh_cc)
+
+n_obs(fit4_cc)
+```
+
+## "Complete Case" Results for `fit_04`
+
+```{r}
+#| echo: true
+glance(fit4_cc) |> select(nobs, r.squared, adj.r.squared)
+
+tidy(fit4_cc, conf.int = TRUE, conf.level = 0.93) |>
+  select(term, estimate, std.error, conf.low, conf.high, p.value) |>
+  gt() |> fmt_number(decimals = 3) |> gt_theme_guardian() 
+```
+
+## Our 4-predictor model
+
+- Use `wt_kg`, `age`, `sex` and `race_eth` to predict `waist`.
+
+Method | Sample | $R^2$ | `wt_kg` (93% CI)
+--------: | -------: | -------: | -------------: 
+Complete Cases | 4,902 | 0.878 | 0.734 (0.727, 0.742)
+Training Sample | 4,000 | 0.880 | 0.735 (0.727, 0.743)
+Single Imp. (all) | 5,150 | 0.877 | 0.724 (0.717, 0.731)
+Multiple Imp. (25) | 5,150 | 0.879 | 0.725 (0.717, 0.733)
+
+## Session Information {.smaller}
+
+```{r}
+#| echo: true
+xfun::session_info()
+```
